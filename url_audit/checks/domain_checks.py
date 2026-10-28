@@ -1,5 +1,7 @@
 from typing import List, Optional
 from ..utils import CheckResult, domain_parts, whois_lookup
+from ..domain_intel import parse_domain_info, detect_brand_impersonation, resolve_dns_outcome
+from ..security import parse_ip_safe
 import re, requests
 from urllib.parse import urlparse
 from datetime import datetime
@@ -51,15 +53,12 @@ def _safe_str(value) -> str:
     return str(value)
 
 def _domain_only(url: str) -> str:
-    p = urlparse(url)
-    host = (p.hostname or "").lower()
-    # fall back to tldextract if needed
     try:
-        import tldextract
-        ext = tldextract.extract(host)
-        return ".".join([ext.domain, ext.suffix]) if ext.suffix else host
+        info = parse_domain_info(url)
+        return info.registrable_domain or info.hostname
     except Exception:
-        return host
+        p = urlparse(url)
+        return (p.hostname or "").lower()
 
 @lru_cache(maxsize=512)
 def _rdap_fetch(domain: str) -> Optional[dict]:
@@ -212,15 +211,92 @@ def _extract_whois_ownership(whois_obj) -> dict:
     return ownership
 
 def check_domain_legitimacy(url: str) -> CheckResult:
-    # (1) Lookalike heuristic
+    """Evaluates domain legitimacy using standards-aware PSL parsing, brand impersonation, and DNS classification."""
     try:
-        _, host, ext = domain_parts(url)
-        if not host:
-            return CheckResult(1, "Domain Name Legitimacy", "WARN", evidence="Could not extract hostname")
-        suspicious = bool(re.search(r"(paypa1|faceb00k|g00gle|micr0soft|appleid|supp0rt|amaz0n|netfl1x)", host or "", re.I))
-        return CheckResult(1, "Domain Name Legitimacy", "WARN" if suspicious else "PASS", evidence=f"host={host}")
+        parsed = parse_domain_info(url)
+        if not parsed.is_valid_syntax:
+            return CheckResult(
+                1,
+                "Domain Name Legitimacy",
+                "ERROR",
+                evidence=f"Invalid domain syntax: {parsed.syntax_error}",
+                data={"error": "invalid_syntax"},
+            )
+
+        # Handle IP literals separately
+        if parsed.is_ip:
+            return CheckResult(
+                1,
+                "Domain Name Legitimacy",
+                "INFO",
+                evidence=f"Direct IP address: {parsed.hostname}",
+                data={"is_ip": True, "ip_version": parsed.ip_version},
+            )
+
+        # 1. Evaluate Brand Impersonation & Phishing Signals
+        brand_match = detect_brand_impersonation(parsed)
+        if brand_match.is_official:
+            return CheckResult(
+                1,
+                "Domain Name Legitimacy",
+                "PASS",
+                evidence=brand_match.details,
+                data={"official_brand": brand_match.matched_brand},
+            )
+
+        if brand_match.is_impersonation:
+            status = "FAIL" if brand_match.severity == "HIGH" else "WARN"
+            return CheckResult(
+                1,
+                "Domain Name Legitimacy",
+                status,
+                evidence=brand_match.details,
+                data={
+                    "impersonation": True,
+                    "brand": brand_match.matched_brand,
+                    "type": brand_match.impersonation_type,
+                    "severity": brand_match.severity,
+                    "keywords": brand_match.security_keywords_found,
+                },
+            )
+
+        # 2. Evaluate DNS Resolution Outcomes
+        dns_res = resolve_dns_outcome(parsed.hostname)
+        if dns_res.outcome == "NXDOMAIN":
+            return CheckResult(
+                1,
+                "Domain Name Legitimacy",
+                "WARN",
+                evidence=dns_res.evidence,
+                data={"dns_outcome": "NXDOMAIN"},
+            )
+        if dns_res.outcome in ("TIMEOUT", "TEMPORARY_FAILURE"):
+            return CheckResult(
+                1,
+                "Domain Name Legitimacy",
+                "ERROR",
+                evidence=dns_res.evidence,
+                data={"dns_outcome": dns_res.outcome},
+            )
+        if dns_res.outcome == "NO_ANSWER":
+            return CheckResult(
+                1,
+                "Domain Name Legitimacy",
+                "WARN",
+                evidence=dns_res.evidence,
+                data={"dns_outcome": "NO_ANSWER"},
+            )
+
+        # 3. Legitimate Domain Validation
+        return CheckResult(
+            1,
+            "Domain Name Legitimacy",
+            "PASS",
+            evidence=f"host={parsed.hostname} registrable={parsed.registrable_domain}",
+            data={"registrable_domain": parsed.registrable_domain, "dns_outcome": "RESOLVED"},
+        )
     except Exception as e:
-        return CheckResult(1, "Domain Name Legitimacy", "WARN", evidence=f"Error: {str(e)[:100]}")
+        return CheckResult(1, "Domain Name Legitimacy", "ERROR", evidence=f"Domain analysis error: {str(e)[:100]}")
 
 def check_tld(url: str) -> CheckResult:
     # (2) High-risk TLD heuristic
@@ -237,11 +313,18 @@ def check_whois_age(url: str) -> CheckResult:
     # (3) WHOIS age with RDAP fallback (handles .edu and others)
     _, host, ext = domain_parts(url)
     domain = ".".join([p for p in [ext.domain, ext.suffix] if p])
+    if not domain:
+        direct_ip = parse_ip_safe(host)
+        if direct_ip is not None:
+            return CheckResult(3, "WHOIS and Domain Age", "SKIP", evidence=f"Direct IP address {direct_ip}; domain registration not applicable")
+        return CheckResult(3, "WHOIS and Domain Age", "ERROR", evidence="Could not extract domain from URL")
+
     w = _whois_fetch(domain)
     cd = getattr(w, "creation_date", None)
     if isinstance(cd, list):
         cd = cd[0]
 
+    rdap = None
     # RDAP fallback if WHOIS missing/unparseable
     if not cd:
         rdap = _rdap_fetch(domain)
@@ -252,12 +335,14 @@ def check_whois_age(url: str) -> CheckResult:
             cd = None
 
     if not cd:
-        return CheckResult(3, "WHOIS and Domain Age", "WARN", evidence="WHOIS/RDAP creation date unavailable")
+        if w is None and not rdap:
+            return CheckResult(3, "WHOIS and Domain Age", "ERROR", evidence="WHOIS and RDAP services unavailable")
+        return CheckResult(3, "WHOIS and Domain Age", "WARN", evidence="Registration creation date unavailable in WHOIS/RDAP")
 
     try:
         from datetime import datetime, timezone
         if not isinstance(cd, datetime):
-            return CheckResult(3, "WHOIS and Domain Age", "WARN", evidence="Invalid creation_date format")
+            return CheckResult(3, "WHOIS and Domain Age", "ERROR", evidence="Invalid creation_date format returned by registrar")
         if not getattr(cd, "tzinfo", None):
             # assume UTC if naive
             cd = cd.replace(tzinfo=timezone.utc)
@@ -265,7 +350,7 @@ def check_whois_age(url: str) -> CheckResult:
         status = "PASS" if age_days >= 90 else "WARN"
         return CheckResult(3, "WHOIS and Domain Age", status, evidence=f"age_days={age_days}")
     except Exception as e:
-        return CheckResult(3, "WHOIS and Domain Age", "WARN", evidence=f"Parse error: {str(e)[:100]}")
+        return CheckResult(3, "WHOIS and Domain Age", "ERROR", evidence=f"WHOIS date parse error: {str(e)[:100]}")
 
 def _has_dmarc(domain: str) -> bool:
     """
@@ -349,11 +434,18 @@ def check_domain_expiry(url: str) -> CheckResult:
     # (6) Expiration via WHOIS with RDAP fallback
     _, host, ext = domain_parts(url)
     domain = ".".join([p for p in [ext.domain, ext.suffix] if p])
+    if not domain:
+        direct_ip = parse_ip_safe(host)
+        if direct_ip is not None:
+            return CheckResult(6, "Domain Expiry and Renewal", "SKIP", evidence=f"Direct IP address {direct_ip}; domain expiry not applicable")
+        return CheckResult(6, "Domain Expiry and Renewal", "ERROR", evidence="Could not extract domain from URL")
+
     w = _whois_fetch(domain)
     ed = getattr(w, "expiration_date", None)
     if isinstance(ed, list):
         ed = ed[0]
 
+    rdap = None
     if not ed:
         rdap = _rdap_fetch(domain) or {}
         try:
@@ -362,19 +454,29 @@ def check_domain_expiry(url: str) -> CheckResult:
             ed = None
 
     if not ed:
-        return CheckResult(6, "Domain Expiry and Renewal", "WARN", evidence="expiration_date unavailable")
+        if w is None and not rdap:
+            return CheckResult(6, "Domain Expiry and Renewal", "ERROR", evidence="WHOIS and RDAP services unavailable")
+        return CheckResult(6, "Domain Expiry and Renewal", "WARN", evidence="expiration_date unavailable in registration records")
 
     try:
         from datetime import datetime, timezone
         if not isinstance(ed, datetime):
-            return CheckResult(6, "Domain Expiry and Renewal", "WARN", evidence="Invalid expiration_date format")
+            return CheckResult(6, "Domain Expiry and Renewal", "ERROR", evidence="Invalid expiration_date format returned by registrar")
         if not getattr(ed, "tzinfo", None):
             ed = ed.replace(tzinfo=timezone.utc)
         days_left = (ed - datetime.now(timezone.utc)).days
-        status = "WARN" if days_left < 30 else "PASS"
-        return CheckResult(6, "Domain Expiry and Renewal", status, evidence=f"days_left={days_left}")
+        if days_left < 0:
+            status = "FAIL"
+            evidence = f"Domain expired {abs(days_left)} days ago"
+        elif days_left < 30:
+            status = "WARN"
+            evidence = f"Domain expiring soon: days_left={days_left}"
+        else:
+            status = "PASS"
+            evidence = f"Domain active: days_left={days_left}"
+        return CheckResult(6, "Domain Expiry and Renewal", status, evidence=evidence)
     except Exception as e:
-        return CheckResult(6, "Domain Expiry and Renewal", "WARN", evidence=f"Parse error: {str(e)[:100]}")
+        return CheckResult(6, "Domain Expiry and Renewal", "ERROR", evidence=f"Expiry date parse error: {str(e)[:100]}")
 
 def check_previous_ownership(url: str) -> CheckResult:
     # (7) Return ownership details + ownership/transfer history signals

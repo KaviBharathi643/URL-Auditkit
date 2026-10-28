@@ -34,10 +34,10 @@ const EMPTY_OVERVIEW: DashboardOverview = {
 };
 
 const PIE_COLORS: Record<string, string> = {
-  LOW: '#10b981',
-  MEDIUM: '#f59e0b',
-  HIGH: '#ef4444',
-  CRITICAL: '#ff355d',
+  LOW: '#2E7D32',
+  MEDIUM: '#E67E22',
+  HIGH: '#FF758F',
+  CRITICAL: '#D8224C',
 };
 
 function formatTimestamp(value: string): string {
@@ -188,15 +188,15 @@ export default function DashboardPage() {
               <AreaChart data={activityGraphData}>
                 <defs>
                   <linearGradient id="scanActivityFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.7} />
-                    <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.08} />
+                    <stop offset="5%" stopColor="#FFB7C5" stopOpacity={0.85} />
+                    <stop offset="95%" stopColor="#FFB7C5" stopOpacity={0.12} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="#1f2937" strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                <CartesianGrid stroke="#F2C7C7" strokeDasharray="3 3" opacity={0.6} />
+                <XAxis dataKey="label" tick={{ fill: '#6E5562', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#6E5562', fontSize: 11 }} />
                 <Tooltip />
-                <Area type="monotone" dataKey="total" stroke="#06b6d4" fill="url(#scanActivityFill)" />
+                <Area type="monotone" dataKey="total" stroke="#E06D85" strokeWidth={2.5} fill="url(#scanActivityFill)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -207,12 +207,12 @@ export default function DashboardPage() {
           <div className="chart-box">
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={activityGraphData}>
-                <CartesianGrid stroke="#1f2937" strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                <CartesianGrid stroke="#F2C7C7" strokeDasharray="3 3" opacity={0.6} />
+                <XAxis dataKey="label" tick={{ fill: '#6E5562', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#6E5562', fontSize: 11 }} />
                 <Tooltip />
-                <Bar dataKey="malicious" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="safe" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="malicious" fill="#FF758F" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="safe" fill="#43A047" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

@@ -11,7 +11,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.websockets import WebSocketDisconnect
 
-from url_audit.runner import run_all, summarize, total_steps
+from url_audit.runner import (
+    DEFAULT_GLOBAL_SCAN_LIMIT,
+    DEFAULT_SCAN_DEADLINE,
+    run_all,
+    run_all_async,
+    shutdown_shared_executor,
+    summarize,
+    total_steps,
+)
+from url_audit.security import (
+    DEFAULT_SCAN_DEADLINE,
+    URLSecurityError,
+    resolve_and_validate_destination,
+    validate_url,
+)
 from webapp.persistence import (
     get_dashboard_overview,
     get_ip_reputation,
@@ -99,17 +113,24 @@ STATUS_STYLES: Dict[str, Dict[str, str]] = {
     "PASS": {"badge": "success", "icon": "verified"},
     "WARN": {"badge": "warning", "icon": "report"},
     "FAIL": {"badge": "danger", "icon": "dangerous"},
+    "ERROR": {"badge": "dark", "icon": "error_outline"},
     "INFO": {"badge": "info", "icon": "info"},
     "SKIP": {"badge": "secondary", "icon": "upcoming"},
 }
 
 _progress_lock = asyncio.Lock()
 _progress_channels: Dict[str, asyncio.Queue] = {}
+_GLOBAL_SCAN_SEMAPHORE = asyncio.Semaphore(DEFAULT_GLOBAL_SCAN_LIMIT)
 
 
 @app.on_event("startup")
 async def _startup() -> None:
     init_db()
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    shutdown_shared_executor(wait=False)
 
 
 def _frontend_url() -> str:
@@ -120,7 +141,8 @@ async def _get_progress_queue(job_id: str) -> asyncio.Queue:
     async with _progress_lock:
         queue = _progress_channels.get(job_id)
         if queue is None:
-            queue = asyncio.Queue()
+            # Bound progress queue capacity to prevent unbounded memory retention
+            queue = asyncio.Queue(maxsize=100)
             _progress_channels[job_id] = queue
         return queue
 
@@ -151,9 +173,10 @@ def _status_to_risk(status: str) -> str:
         "INFO": "LOW",
         "WARN": "MEDIUM",
         "FAIL": "HIGH",
+        "ERROR": "LOW",
         "SKIP": "LOW",
     }
-    return mapping.get((status or "").upper(), "MEDIUM")
+    return mapping.get((status or "").upper(), "LOW")
 
 
 def _default_summary(result: Any) -> Dict[str, str]:
@@ -223,7 +246,7 @@ def _prepare_results(
 
 def _build_summary_cards(counts: Dict[str, int]) -> List[Dict[str, Any]]:
     cards: List[Dict[str, Any]] = []
-    for status in ["PASS", "WARN", "FAIL", "INFO", "SKIP"]:
+    for status in ["PASS", "WARN", "FAIL", "ERROR", "INFO", "SKIP"]:
         style = STATUS_STYLES.get(status, {"badge": "secondary", "icon": "bi-dot"})
         cards.append(
             {
@@ -280,10 +303,19 @@ async def audit_json(
     job_id: Optional[str] = Form(None),
     scan_mode: Optional[str] = Form("scan"),
 ) -> JSONResponse:
-    clean_url = url.strip()
-    if not clean_url:
+    # 1. Strict URL validation and SSRF destination verification before worker allocation
+    try:
+        val_url = validate_url(url)
+        resolve_and_validate_destination(val_url.hostname, val_url.port)
+        target_url = val_url.canonical_url
+    except URLSecurityError as exc:
         return JSONResponse(
-            content={"error": "Please enter a URL to audit."},
+            content={"error": str(exc)},
+            status_code=400,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            content={"error": f"Invalid URL: {exc}"},
             status_code=400,
         )
 
@@ -320,14 +352,25 @@ async def audit_json(
             "percent": percent,
             "label": label,
         }
-        loop.call_soon_threadsafe(progress_queue.put_nowait, payload)
+        try:
+            loop.call_soon_threadsafe(
+                lambda: progress_queue.put_nowait(payload) if not progress_queue.full() else None
+            )
+        except Exception:
+            pass
 
     try:
-        raw_results = await asyncio.to_thread(run_all, clean_url, progress_callback)
+        async with _GLOBAL_SCAN_SEMAPHORE:
+            raw_results = await asyncio.to_thread(
+                run_all, target_url, progress_callback, time.monotonic() + DEFAULT_SCAN_DEADLINE
+            )
         counts = summarize(raw_results)
     except Exception as exc:  # noqa: BLE001
         if progress_queue:
-            await progress_queue.put({"type": "error", "message": str(exc)})
+            try:
+                await progress_queue.put({"type": "error", "message": str(exc)})
+            except Exception:
+                pass
             if job_id:
                 asyncio.create_task(_schedule_discard(job_id))
         return JSONResponse(
@@ -358,7 +401,7 @@ async def audit_json(
     duration_ms = int((time.perf_counter() - started_at) * 1000)
 
     scan_id, ioc_count = persist_scan(
-        target_url=clean_url,
+        target_url=target_url,
         scan_mode=mode,
         prepared_results=prepared_results,
         counts=counts,
@@ -371,15 +414,19 @@ async def audit_json(
     )
 
     if progress_queue:
-        await progress_queue.put(
-            {
-                "type": "complete",
-                "step": total,
-                "total": total,
-                "percent": 100,
-                "label": "Audit complete",
-            }
-        )
+        try:
+            await progress_queue.put(
+                {
+                    "type": "complete",
+                    "step": total,
+                    "total": total,
+                    "percent": 100,
+                    "label": "Audit complete",
+                    "scan_id": scan_id,
+                }
+            )
+        except Exception:
+            pass
         if job_id:
             asyncio.create_task(_schedule_discard(job_id))
 
@@ -391,7 +438,7 @@ async def audit_json(
             "results": prepared_results,
             "grouped_results": grouped_results,
             "summary_cards": summary_cards,
-            "target_url": clean_url,
+            "target_url": target_url,
             "total_checks": total_checks,
             "ai_threat_report": threat_report,
             "ai_metadata": metadata,
@@ -496,11 +543,16 @@ async def audit_progress(websocket: WebSocket, job_id: str) -> None:
     queue = await _get_progress_queue(job_id)
     try:
         while True:
-            message = await queue.get()
+            try:
+                # 30-second heartbeat to detect dead WebSocket connections
+                message = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "ping"})
+                continue
             await websocket.send_json(message)
             if message.get("type") in {"complete", "error"}:
                 break
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
         pass
     finally:
         await _discard_progress_queue(job_id)

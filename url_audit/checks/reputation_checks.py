@@ -1,4 +1,9 @@
 from ..utils import CheckResult, http_json
+from ..security import (
+    DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_READ_TIMEOUT,
+    get_safe_session,
+)
 import os, requests, dns.resolver, time, base64
 from urllib.parse import urlparse
 
@@ -30,13 +35,15 @@ def _lookup_free_blacklists(url: str, domain: str):
     """Use free threat-intel sources (URLhaus + PhishTank) as fallback signals."""
     free_hits = []
     free_notes = []
+    client = get_safe_session()
+    safe_timeout = (DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT)
 
     # URLhaus URL lookup
     try:
-        uh = requests.post(
+        uh = client.post(
             "https://urlhaus-api.abuse.ch/v1/url/",
             data={"url": url},
-            timeout=20,
+            timeout=safe_timeout,
         )
         if uh.ok:
             uj = uh.json() or {}
@@ -52,10 +59,10 @@ def _lookup_free_blacklists(url: str, domain: str):
     # URLhaus host lookup
     if domain:
         try:
-            uh_host = requests.post(
+            uh_host = client.post(
                 "https://urlhaus-api.abuse.ch/v1/host/",
                 data={"host": domain},
-                timeout=20,
+                timeout=safe_timeout,
             )
             if uh_host.ok:
                 hj = uh_host.json() or {}
@@ -70,11 +77,11 @@ def _lookup_free_blacklists(url: str, domain: str):
 
     # PhishTank lookup
     try:
-        pt = requests.post(
+        pt = client.post(
             "https://checkurl.phishtank.com/checkurl/",
             data={"url": url, "format": "json"},
             headers={"User-Agent": "url-audit-kit/1.0"},
-            timeout=20,
+            timeout=safe_timeout,
         )
         if pt.ok:
             pj = pt.json() or {}
@@ -93,12 +100,7 @@ def _lookup_free_blacklists(url: str, domain: str):
 
 def check_security_blacklists(url: str):
     """
-    (25) Reputation in Security Databases (VirusTotal)
-    Flow:
-      1) Submit URL -> get analysis_id
-      2) Compute url_id = base64url(url) with '=' padding removed
-      3) Poll /analyses/{analysis_id} until 'completed'
-      4) Then poll /urls/{url_id} until last_analysis_stats are present
+    (25) Reputation in Security Databases (VirusTotal with URLhaus/PhishTank fallback).
     """
     key = os.getenv("VIRUSTOTAL_API_KEY")
     domain = _domain_from_url(url)
@@ -111,16 +113,24 @@ def check_security_blacklists(url: str):
                 "FAIL",
                 evidence=f"free_blacklist_hits={','.join(free_hits)} {' '.join(free_notes)}".strip(),
             )
+        all_unavailable = all("unavailable" in note or "http" in note for note in free_notes)
+        if all_unavailable and free_notes:
+            return CheckResult(
+                25,
+                "Reputation in Security Databases (VirusTotal)",
+                "ERROR",
+                evidence=f"Threat intel feeds unavailable (VT key missing, free feeds offline): {' '.join(free_notes)}".strip(),
+            )
         return CheckResult(
             25,
             "Reputation in Security Databases (VirusTotal)",
-            "INFO",
-            evidence=f"virustotal_key_missing {' '.join(free_notes)}".strip(),
+            "PASS",
+            evidence=f"Clean in free threat intel databases (URLhaus, PhishTank); {' '.join(free_notes)}".strip(),
         )
 
     headers = {"x-apikey": key}
-    vt_submit_timeout = _env_int("VT_SUBMIT_TIMEOUT_SECONDS", 12)
-    vt_poll_timeout = _env_int("VT_POLL_TIMEOUT_SECONDS", 8)
+    client = get_safe_session()
+    vt_timeout = (DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT)
     vt_poll_interval = _env_int("VT_POLL_INTERVAL_SECONDS", 2)
     vt_max_analysis_polls = _env_int("VT_MAX_ANALYSIS_POLLS", 3)
     vt_max_url_polls = _env_int("VT_MAX_URL_POLLS", 3)
@@ -129,31 +139,44 @@ def check_security_blacklists(url: str):
     try:
         url_id = base64.urlsafe_b64encode(url.encode("utf-8")).decode("ascii").rstrip("=")
     except Exception as e:
-        return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "WARN", evidence=f"base64url error: {e}")
+        return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "ERROR", evidence=f"base64url error: {e}")
 
     # 1) Submit URL for analysis
     try:
-        submit = requests.post("https://www.virustotal.com/api/v3/urls",
-                               headers=headers, data={"url": url}, timeout=vt_submit_timeout)
+        submit = client.post("https://www.virustotal.com/api/v3/urls",
+                             headers=headers, data={"url": url}, timeout=vt_timeout)
         if not submit.ok:
-            return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "WARN",
-                               evidence=f"submit {submit.status_code}: {submit.text[:160]}")
+            # Fall back to free feeds before erroring out
+            free_hits, free_notes = _lookup_free_blacklists(url, domain)
+            if free_hits:
+                return CheckResult(
+                    25,
+                    "Reputation in Security Databases (VirusTotal)",
+                    "FAIL",
+                    evidence=f"vt_submit_{submit.status_code} free_blacklist_hits={','.join(free_hits)}",
+                )
+            return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "ERROR",
+                               evidence=f"VirusTotal submit error {submit.status_code}: {submit.text[:120]}")
         analysis_id = (submit.json().get("data") or {}).get("id")
         if not analysis_id:
-            return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "WARN", evidence="no analysis id")
+            return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "ERROR", evidence="No analysis ID returned by VirusTotal")
     except Exception as e:
-        return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "WARN", evidence=str(e))
+        free_hits, free_notes = _lookup_free_blacklists(url, domain)
+        if free_hits:
+            return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "FAIL",
+                               evidence=f"vt_error free_blacklist_hits={','.join(free_hits)}")
+        return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "ERROR", evidence=f"VirusTotal operational error: {e}")
 
-    # 3) Poll analyses/{analysis_id} until completed
+    # 2) Poll analyses/{analysis_id} until completed
     analyses_url = f"https://www.virustotal.com/api/v3/analyses/{analysis_id}"
     completed = False
     last_err = None
     for _ in range(vt_max_analysis_polls):
         time.sleep(vt_poll_interval)
         try:
-            r = requests.get(analyses_url, headers=headers, timeout=vt_poll_timeout)
+            r = client.get(analyses_url, headers=headers, timeout=vt_timeout)
             if not r.ok:
-                last_err = f"analyses {r.status_code}: {r.text[:160]}"
+                last_err = f"analyses {r.status_code}"
                 continue
             status = ((r.json().get("data") or {}).get("attributes") or {}).get("status")
             if (status or "").lower() == "completed":
@@ -163,18 +186,14 @@ def check_security_blacklists(url: str):
         except Exception as e:
             last_err = f"analyses exception: {e}"
 
-    if not completed:
-        return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "WARN",
-                           evidence=last_err or "analysis polling timeout")
-
-    # 4) Poll urls/{url_id} for consolidated last_analysis_stats
+    # 3) Poll urls/{url_id} for consolidated last_analysis_stats
     urls_url = f"https://www.virustotal.com/api/v3/urls/{url_id}"
     for _ in range(vt_max_url_polls):
         time.sleep(vt_poll_interval)
         try:
-            g = requests.get(urls_url, headers=headers, timeout=vt_poll_timeout)
+            g = client.get(urls_url, headers=headers, timeout=vt_timeout)
             if not g.ok:
-                last_err = f"urls {g.status_code}: {g.text[:160]}"
+                last_err = f"urls {g.status_code}"
                 continue
             attrs = ((g.json().get("data") or {}).get("attributes") or {})
             stats = attrs.get("last_analysis_stats")
@@ -185,29 +204,30 @@ def check_security_blacklists(url: str):
                 undetected = int(stats.get("undetected", 0) or 0)
                 evidence = (f"malicious_engines={malicious} suspicious={suspicious} "
                             f"harmless={harmless} undetected={undetected}")
-                status = "FAIL" if malicious > 0 or suspicious > 0 else "PASS"
+                status = "FAIL" if (malicious > 0 or suspicious > 0) else "PASS"
                 return CheckResult(25, "Reputation in Security Databases (VirusTotal)", status, evidence=evidence, data=stats)
             last_err = "consolidated stats not ready"
         except Exception as e:
             last_err = f"urls exception: {e}"
 
-    # If VT path did not complete, fall back to free sources before warning out.
+    # Fallback to free blacklists if VT did not complete
     free_hits, free_notes = _lookup_free_blacklists(url, domain)
     if free_hits:
         return CheckResult(
             25,
             "Reputation in Security Databases (VirusTotal)",
             "FAIL",
-            evidence=f"vt_unavailable free_blacklist_hits={','.join(free_hits)} {' '.join(free_notes)}".strip(),
+            evidence=f"vt_incomplete free_blacklist_hits={','.join(free_hits)} {' '.join(free_notes)}".strip(),
         )
-    return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "WARN",
-                       evidence=last_err or "Timeout awaiting consolidated stats")
+    return CheckResult(25, "Reputation in Security Databases (VirusTotal)", "ERROR",
+                       evidence=last_err or "VirusTotal timeout awaiting consolidated stats")
+
 
 def check_google_safe_browsing(url: str):
     # (25b) Google Safe Browsing v4
     key = os.getenv("GOOGLE_SAFE_BROWSING_API_KEY")
     if not key:
-        return CheckResult(25, "Google Safe Browsing", "SKIP", evidence="Set GOOGLE_SAFE_BROWSING_API_KEY")
+        return CheckResult(25, "Google Safe Browsing", "SKIP", evidence="GOOGLE_SAFE_BROWSING_API_KEY not configured")
     body = {
         "client": {"clientId": "url-audit-kit", "clientVersion": "1.0"},
         "threatInfo": {
@@ -217,17 +237,21 @@ def check_google_safe_browsing(url: str):
             "threatEntries": [{"url": url}]
         }
     }
-    r = requests.post(
-        f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={key}",
-        json=body, timeout=15
-    )
-    if not r.ok:
-        return CheckResult(25, "Google Safe Browsing", "WARN", evidence=f"HTTP {r.status_code}")
-    j = r.json() or {}
-    matches = j.get("matches", [])
-    if matches:
-        return CheckResult(25, "Google Safe Browsing", "FAIL", evidence=f"matches={len(matches)}", data=matches)
-    return CheckResult(25, "Google Safe Browsing", "PASS", evidence="no matches")
+    try:
+        client = get_safe_session()
+        r = client.post(
+            f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={key}",
+            json=body, timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT)
+        )
+        if not r.ok:
+            return CheckResult(25, "Google Safe Browsing", "ERROR", evidence=f"Google Safe Browsing API error: HTTP {r.status_code}")
+        j = r.json() or {}
+        matches = j.get("matches", [])
+        if matches:
+            return CheckResult(25, "Google Safe Browsing", "FAIL", evidence=f"matches={len(matches)}", data=matches)
+        return CheckResult(25, "Google Safe Browsing", "PASS", evidence="no matches (clean)")
+    except Exception as e:
+        return CheckResult(25, "Google Safe Browsing", "ERROR", evidence=f"Google Safe Browsing operational error: {e}")
 
 def check_search_visibility(url: str):
     # (26) Google via SerpAPI (optional)

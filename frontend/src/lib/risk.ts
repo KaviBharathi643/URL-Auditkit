@@ -11,6 +11,7 @@ export function riskClass(level?: string): string {
 export function statusClass(status?: CheckStatus | string): string {
   const normalized = (status || '').toUpperCase();
   if (normalized === 'FAIL') return 'status-badge status-fail';
+  if (normalized === 'ERROR') return 'status-badge status-error';
   if (normalized === 'WARN') return 'status-badge status-warn';
   if (normalized === 'INFO') return 'status-badge status-info';
   if (normalized === 'SKIP') return 'status-badge status-skip';

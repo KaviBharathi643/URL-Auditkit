@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import json
 import os
 import re
@@ -11,10 +12,24 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
+from url_audit.security import is_blocked_ip
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "url_audit.db"
 
-IP_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+SEVERITY_ORDER: Dict[str, int] = {
+    "LOW": 1,
+    "MEDIUM": 2,
+    "HIGH": 3,
+    "CRITICAL": 4,
+}
+
+DOMAIN_REGEX = re.compile(
+    r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
+)
+IPV4_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+IPV6_REGEX = re.compile(r"\b[0-9a-fA-F:]{3,39}\b")
+IP_PATTERN = IPV4_REGEX
 
 COUNTRY_COORDS: Dict[str, Tuple[float, float]] = {
     "US": (37.0902, -95.7129),
@@ -144,120 +159,142 @@ def _domain_from_url(url: str) -> str:
         return ""
 
 
-def _add_ioc(
-    results: List[Dict[str, Any]],
-    seen: set,
-    *,
-    indicator: str,
-    indicator_type: str,
-    severity: str,
-    source_check: str,
-    country: str,
+def _is_valid_public_ip(ip_str: str) -> bool:
+    """Verifies that an IP indicator is a valid public, routable IPv4 or IPv6 address."""
+    clean = (ip_str or "").strip()
+    if not clean:
+        return False
+    try:
+        ip_obj = ipaddress.ip_address(clean)
+        blocked, _ = is_blocked_ip(ip_obj)
+        return not blocked
+    except ValueError:
+        return False
+
+
+def _is_valid_domain(domain_str: str) -> bool:
+    """Validates domain indicator syntax and excludes IPs and non-routable internal domains."""
+    clean = (domain_str or "").strip().lower()
+    if not clean or len(clean) > 253:
+        return False
+    try:
+        ipaddress.ip_address(clean)
+        return False
+    except ValueError:
+        pass
+    if clean == "localhost" or any(clean.endswith(s) for s in (".localhost", ".local", ".internal", ".lan", ".home.arpa")):
+        return False
+    return bool(DOMAIN_REGEX.match(clean))
+
+
+def extract_iocs(
+    target_url: str,
+    checks: Sequence[Dict[str, Any]],
     created_at: str,
-) -> None:
-    text = (indicator or "").strip()
-    if not text:
-        return
+) -> List[Dict[str, Any]]:
+    """Extracts, validates, and deduplicates indicators of compromise from failed or warning checks.
+    
+    Guarantees:
+    - Never extracts a malicious IOC solely from an ERROR, SKIP, or PASS result.
+    - Classifies IPv4 and IPv6 addresses as IP.
+    - Classifies valid DNS names as DOMAIN.
+    - Rejects malformed indicators.
+    - Excludes loopback, private RFC 1918, link-local, and cloud metadata addresses.
+    - Deduplicates indicators while preserving the highest severity and source check evidence.
+    """
+    ioc_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
-    key = (
-        text.lower(),
-        indicator_type.upper(),
-        severity.upper(),
-        source_check.lower(),
-        country.upper(),
-    )
-    if key in seen:
-        return
-    seen.add(key)
-    results.append(
-        {
-            "indicator": text,
-            "indicator_type": indicator_type.upper(),
-            "severity": severity.upper(),
-            "source_check": source_check,
-            "country": country.upper(),
-            "created_at": created_at,
-        }
-    )
+    def _register_ioc(indicator: str, indicator_type: str, severity: str, source_check: str, country: str = "") -> None:
+        ind = (indicator or "").strip()
+        itype = indicator_type.strip().upper()
+        sev = severity.strip().upper()
+        if sev not in SEVERITY_ORDER:
+            sev = "LOW"
 
+        # Validate indicator according to its declared type
+        if itype == "IP":
+            if not _is_valid_public_ip(ind):
+                return
+        elif itype == "DOMAIN":
+            if not _is_valid_domain(ind):
+                return
+            ind = ind.lower()
+        elif itype == "URL":
+            if not (ind.startswith("http://") or ind.startswith("https://")):
+                return
+        elif itype == "ISSUER":
+            if not ind or len(ind) < 2:
+                return
+        else:
+            return  # Reject unknown / malformed indicator type
 
-def extract_iocs(target_url: str, checks: Sequence[Dict[str, Any]], created_at: str) -> List[Dict[str, Any]]:
-    iocs: List[Dict[str, Any]] = []
-    seen = set()
-    domain = _domain_from_url(target_url)
+        key = (ind.lower(), itype)
+        if key in ioc_map:
+            existing = ioc_map[key]
+            # Preserve the higher severity if indicator appeared in multiple checks
+            if SEVERITY_ORDER.get(sev, 0) > SEVERITY_ORDER.get(existing["severity"], 0):
+                existing["severity"] = sev
+                existing["source_check"] = source_check
+                if country and not existing.get("country"):
+                    existing["country"] = country.upper()
+        else:
+            ioc_map[key] = {
+                "indicator": ind,
+                "indicator_type": itype,
+                "severity": sev,
+                "source_check": source_check,
+                "country": country.upper() if country else "",
+                "created_at": created_at,
+            }
 
-    if domain:
-        _add_ioc(
-            iocs,
-            seen,
-            indicator=domain,
-            indicator_type="DOMAIN",
-            severity="LOW",
-            source_check="Target URL",
-            country="",
-            created_at=created_at,
-        )
-
+    # Only inspect checks with positive failure (FAIL) or non-critical suspicion (WARN)
     for check in checks:
+        status = str(check.get("status") or "").upper()
+        if status not in {"FAIL", "WARN"}:
+            # ERROR, SKIP, PASS, and INFO checks MUST NEVER produce malicious IOCs
+            continue
+
         name = str(check.get("name") or "Unknown Check")
-        status = str(check.get("status") or "WARN").upper()
         evidence = str(check.get("evidence") or "")
         lower_name = name.lower()
         country = _country_from_check(check)
         severity = _severity_from_check(name, status)
 
-        if status in {"FAIL", "WARN"} and ("blacklist" in lower_name or "safe browsing" in lower_name):
-            _add_ioc(
-                iocs,
-                seen,
-                indicator=target_url,
-                indicator_type="URL",
-                severity="CRITICAL" if status == "FAIL" else "HIGH",
-                source_check=name,
-                country=country,
-                created_at=created_at,
-            )
+        # 1. Threat reputation matches indicate the URL and target domain are malicious
+        if "blacklist" in lower_name or "safe browsing" in lower_name:
+            _register_ioc(target_url, "URL", severity, name, country)
+            target_domain = _domain_from_url(target_url)
+            if target_domain:
+                _register_ioc(target_domain, "DOMAIN", severity, name, country)
 
+        # 2. Extract public IPv4 addresses
         payload_blob = f"{evidence} {json.dumps(check.get('data', {}), default=str)}"
-        for ip in IP_PATTERN.findall(payload_blob):
-            _add_ioc(
-                iocs,
-                seen,
-                indicator=ip,
-                indicator_type="IP",
-                severity=severity,
-                source_check=name,
-                country=country,
-                created_at=created_at,
-            )
+        for ip in IPV4_REGEX.findall(payload_blob):
+            _register_ioc(ip, "IP", severity, name, country)
 
-        if status in {"FAIL", "WARN"} and "homoglyph" in lower_name and domain:
-            _add_ioc(
-                iocs,
-                seen,
-                indicator=domain,
-                indicator_type="DOMAIN",
-                severity="HIGH",
-                source_check=name,
-                country=country,
-                created_at=created_at,
-            )
+        # 3. Extract public IPv6 addresses
+        for token in IPV6_REGEX.findall(payload_blob):
+            if ":" in token:
+                try:
+                    ip6_obj = ipaddress.IPv6Address(token)
+                    _register_ioc(str(ip6_obj), "IP", severity, name, country)
+                except ValueError:
+                    pass
 
-        if status in {"FAIL", "WARN"} and "certificate issuer" in lower_name:
-            issuer_match = re.search(r"issuer=([^,]+)", evidence, flags=re.IGNORECASE)
+        # 4. Homoglyph and typosquatting detections
+        if "homoglyph" in lower_name:
+            target_domain = _domain_from_url(target_url)
+            if target_domain:
+                _register_ioc(target_domain, "DOMAIN", severity, name, country)
+
+        # 5. Untrusted certificate issuer
+        if "certificate issuer" in lower_name:
+            issuer_match = re.search(r"issuer=([^,;]+)", evidence, flags=re.IGNORECASE)
             if issuer_match:
-                _add_ioc(
-                    iocs,
-                    seen,
-                    indicator=issuer_match.group(1).strip(),
-                    indicator_type="ISSUER",
-                    severity=severity,
-                    source_check=name,
-                    country=country,
-                    created_at=created_at,
-                )
+                issuer_name = issuer_match.group(1).strip()
+                _register_ioc(issuer_name, "ISSUER", severity, name, country)
 
-    return iocs
+    return list(ioc_map.values())
 
 
 @contextlib.contextmanager
@@ -289,6 +326,7 @@ def init_db() -> None:
                 pass_count INTEGER NOT NULL DEFAULT 0,
                 warn_count INTEGER NOT NULL DEFAULT 0,
                 fail_count INTEGER NOT NULL DEFAULT 0,
+                error_count INTEGER NOT NULL DEFAULT 0,
                 info_count INTEGER NOT NULL DEFAULT 0,
                 skip_count INTEGER NOT NULL DEFAULT 0,
                 ai_verdict TEXT,
@@ -334,6 +372,10 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_iocs_country ON iocs(country);
             """
         )
+        # Migration: Ensure error_count column exists for existing databases
+        existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(scans)").fetchall()}
+        if "error_count" not in existing_cols:
+            conn.execute("ALTER TABLE scans ADD COLUMN error_count INTEGER NOT NULL DEFAULT 0")
 
 
 def persist_scan(
@@ -361,9 +403,9 @@ def persist_scan(
             """
             INSERT INTO scans (
                 target_url, scan_mode, risk_score, risk_level, verdict, total_checks,
-                pass_count, warn_count, fail_count, info_count, skip_count,
+                pass_count, warn_count, fail_count, error_count, info_count, skip_count,
                 ai_verdict, ai_summary, threat_report_json, duration_ms, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 target_url,
@@ -375,6 +417,7 @@ def persist_scan(
                 int(counts.get("PASS", 0)),
                 int(counts.get("WARN", 0)),
                 int(counts.get("FAIL", 0)),
+                int(counts.get("ERROR", 0)),
                 int(counts.get("INFO", 0)),
                 int(counts.get("SKIP", 0)),
                 ai_verdict,
@@ -446,6 +489,7 @@ def _range_since(range_value: str) -> str:
 
 
 def _scan_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    row_keys = row.keys()
     return {
         "id": row["id"],
         "target_url": row["target_url"],
@@ -457,6 +501,7 @@ def _scan_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
         "pass_count": row["pass_count"],
         "warn_count": row["warn_count"],
         "fail_count": row["fail_count"],
+        "error_count": row["error_count"] if "error_count" in row_keys else 0,
         "info_count": row["info_count"],
         "skip_count": row["skip_count"],
         "ai_verdict": row["ai_verdict"],
@@ -721,6 +766,7 @@ def get_scan_report(scan_id: int) -> Optional[Dict[str, Any]]:
             "pass_count": scan["pass_count"],
             "warn_count": scan["warn_count"],
             "fail_count": scan["fail_count"],
+            "error_count": scan.get("error_count", 0),
             "info_count": scan["info_count"],
             "skip_count": scan["skip_count"],
             "risk_score": scan["risk_score"],

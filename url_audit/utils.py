@@ -7,7 +7,26 @@ from bs4 import BeautifulSoup
 import tldextract
 import dns.resolver
 
-TIMEOUT = 15
+from .security import (
+    DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_READ_TIMEOUT,
+    DEFAULT_SCAN_DEADLINE,
+    InvalidURLError,
+    RedirectSecurityError,
+    SSRFError,
+    URLSecurityError,
+    create_default_ssl_context,
+    get_safe_session,
+    resolve_and_validate_destination,
+    safe_request,
+    safe_socket_create_connection,
+    validate_url,
+)
+
+TIMEOUT = int(DEFAULT_CONNECT_TIMEOUT + DEFAULT_READ_TIMEOUT)
+
+# Configure controlled DNS resolver limits
+_DEFAULT_DNS_LIFETIME = 3.0
 
 def get_env(name: str, default: Optional[str]=None) -> Optional[str]:
     v = os.getenv(name, default)
@@ -17,13 +36,13 @@ def get_env(name: str, default: Optional[str]=None) -> Optional[str]:
 class CheckResult:
     id: int
     name: str
-    status: str  # PASS | WARN | FAIL | SKIP | INFO
+    status: str  # PASS | WARN | FAIL | ERROR | SKIP | INFO
     evidence: str = ""
     data: Dict[str, Any] = field(default_factory=dict)
 
 def fetch(url: str) -> Tuple[Optional[requests.Response], Optional[str], Optional[BeautifulSoup]]:
     try:
-        resp = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": "URL-Audit-Kit/1.0"})
+        resp, _ = safe_request("GET", url, allow_redirects=True)
         html = resp.text if resp.content else ""
         soup = BeautifulSoup(html, "lxml") if html else None
         return resp, html, soup
@@ -32,56 +51,79 @@ def fetch(url: str) -> Tuple[Optional[requests.Response], Optional[str], Optiona
 
 def head(url: str) -> Optional[requests.Response]:
     try:
-        return requests.head(url, timeout=TIMEOUT, allow_redirects=True, headers={"User-Agent": "URL-Audit-Kit/1.0"})
+        resp, _ = safe_request("HEAD", url, allow_redirects=True)
+        return resp
     except Exception:
         return None
 
 def get_cert_chain(hostname: str, port: int = 443):
     try:
-        ctx = ssl.create_default_context()
-        with socket.create_connection((hostname, port), timeout=TIMEOUT) as sock:
-            with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
-                cert = ssock.getpeercert()
-                return cert
+        ctx = create_default_ssl_context()
+        sock, _ = safe_socket_create_connection(
+            hostname=hostname,
+            port=port,
+            timeout=DEFAULT_CONNECT_TIMEOUT,
+            ssl_context=ctx,
+            server_hostname=hostname,
+        )
+        with sock:
+            cert = sock.getpeercert()
+            return cert
     except Exception:
         return None
 
-_EXTRACTOR = tldextract.TLDExtract(fallback_to_snapshot=True)
-
 def domain_parts(url: str):
+    from collections import namedtuple
+    from .domain_intel import parse_domain_info
+
+    info = parse_domain_info(url)
     parsed = urlparse(url)
-    host = parsed.hostname or ""
-    try:
-        ext = _EXTRACTOR(host)
-    except Exception:
-        ext = tldextract.TLDExtract(suffix_list_urls=())(host)
+    host = info.hostname
+    ExtResult = namedtuple("ExtractResult", ["subdomain", "domain", "suffix"])
+    ext = ExtResult(subdomain=info.subdomain, domain=info.domain, suffix=info.suffix)
     return parsed, host, ext
 
 def txt_records(domain: str) -> List[str]:
     out = []
+    clean_domain = (domain or "").strip().lower()
+    if not clean_domain:
+        return out
     try:
-        for rdata in dns.resolver.resolve(domain, "TXT"):
+        resolver = dns.resolver.Resolver()
+        resolver.lifetime = _DEFAULT_DNS_LIFETIME
+        for rdata in resolver.resolve(clean_domain, "TXT"):
             out.extend([b.decode("utf-8") if isinstance(b, bytes) else str(b) for b in rdata.strings])
     except Exception:
         pass
     return out
 
 def mx_records(domain: str) -> List[str]:
+    clean_domain = (domain or "").strip().lower()
+    if not clean_domain:
+        return []
     try:
-        return [str(r.exchange).rstrip(".") for r in dns.resolver.resolve(domain, "MX")]
+        resolver = dns.resolver.Resolver()
+        resolver.lifetime = _DEFAULT_DNS_LIFETIME
+        return [str(r.exchange).rstrip(".") for r in resolver.resolve(clean_domain, "MX")]
     except Exception:
         return []
 
 def whois_lookup(domain: str):
+    clean_domain = (domain or "").strip().lower()
+    if not clean_domain:
+        return None
     try:
+        # Pre-validate domain is not an SSRF / internal target
+        resolve_and_validate_destination(clean_domain, 43)
         import whois
-        return whois.whois(domain)
+        return whois.whois(clean_domain)
     except Exception:
         return None
 
 def http_json(url: str, params=None, headers=None):
     try:
-        r = requests.get(url, params=params, headers=headers, timeout=TIMEOUT)
+        client = get_safe_session()
+        r = client.get(url, params=params, headers=headers, timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT))
         if r.ok:
             return r.json()
     except Exception:
@@ -90,7 +132,8 @@ def http_json(url: str, params=None, headers=None):
 
 def post_json(url: str, json_body=None, headers=None):
     try:
-        r = requests.post(url, json=json_body, headers=headers, timeout=TIMEOUT)
+        client = get_safe_session()
+        r = client.post(url, json=json_body, headers=headers, timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT))
         if r.ok:
             return r.json()
     except Exception:
@@ -111,7 +154,7 @@ def has_security_header(headers: dict, key: str) -> bool:
 
 def count_redirects(url: str) -> int:
     try:
-        r = requests.get(url, timeout=TIMEOUT, allow_redirects=True)
-        return len(r.history)
+        _, chain = safe_request("GET", url, allow_redirects=True)
+        return max(0, len(chain) - 1)
     except Exception:
         return 0

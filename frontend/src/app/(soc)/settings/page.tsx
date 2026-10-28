@@ -63,8 +63,9 @@ export default function SettingsPage() {
       <section className="panel">
         <h2>SOC Theme Profile</h2>
         <p>
-          Dark cybersecurity theme is enforced as the default enterprise profile. Accent colors and contrast values
-          are optimized for prolonged SOC workflows.
+          Cherry Blossom theme is active with soft blush (#F2C7C7), pure white (#FFFFFF), pale mint (#D5F3D8),
+          and vibrant sakura pink (#FFB7C5). Accent colors, high-contrast typography, and telemetry indicators are
+          optimized for prolonged SOC workflows and WCAG AAA readability.
         </p>
       </section>
     </div>

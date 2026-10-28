@@ -16,7 +16,7 @@ def check_llm_content_analysis(url: str) -> CheckResult:
     try:
         resp, html, soup = fetch(url)
         if not soup:
-            return CheckResult(41, "AI Content Analysis", "SKIP", evidence="Could not fetch page content")
+            return CheckResult(41, "AI Content Analysis", "ERROR", evidence="Could not fetch page content")
         
         text = soup.get_text(" ", strip=True)
         if not text or len(text) < 50:
@@ -29,7 +29,7 @@ def check_llm_content_analysis(url: str) -> CheckResult:
         
         if not analysis.get("enabled"):
             reason = analysis.get("summary") or analysis.get("error") or "LLM unavailable"
-            return CheckResult(41, "AI Content Analysis", "INFO", evidence=reason[:200])
+            return CheckResult(41, "AI Content Analysis", "SKIP", evidence=reason[:200])
         
         # Extract risk signals
         risks = []
@@ -57,4 +57,4 @@ def check_llm_content_analysis(url: str) -> CheckResult:
         
         return CheckResult(41, "AI Content Analysis", status, evidence=evidence, data=analysis)
     except Exception as e:
-        return CheckResult(41, "AI Content Analysis", "WARN", evidence=f"Analysis error: {str(e)[:150]}")
+        return CheckResult(41, "AI Content Analysis", "ERROR", evidence=f"Analysis error: {str(e)[:150]}")

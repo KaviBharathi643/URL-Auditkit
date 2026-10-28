@@ -1,6 +1,6 @@
-export type CheckStatus = 'PASS' | 'WARN' | 'FAIL' | 'INFO' | 'SKIP';
+export type CheckStatus = 'PASS' | 'WARN' | 'FAIL' | 'ERROR' | 'INFO' | 'SKIP';
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-export type Verdict = 'BENIGN' | 'SUSPICIOUS' | 'MALICIOUS';
+export type Verdict = 'BENIGN' | 'SUSPICIOUS' | 'MALICIOUS' | 'INCONCLUSIVE';
 
 export interface CheckResult {
   id: number;

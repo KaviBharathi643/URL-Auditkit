@@ -198,11 +198,15 @@ def _fallback_results(results: List["CheckResult"], reason: str) -> Dict[str, An
     total_checks = len(per_check)
     fail_total = counts.get("FAIL", 0)
     warn_total = counts.get("WARN", 0)
+    pass_total = counts.get("PASS", 0)
+    error_total = counts.get("ERROR", 0)
 
     if fail_total > 0:
         verdict = "MALICIOUS"
     elif warn_total > 2:
         verdict = "SUSPICIOUS"
+    elif pass_total < 3 and error_total > 0:
+        verdict = "INCONCLUSIVE"
     else:
         verdict = "BENIGN"
 

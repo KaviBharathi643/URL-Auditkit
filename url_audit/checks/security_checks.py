@@ -10,6 +10,15 @@ from typing import Tuple, Optional
 import requests
 
 from ..utils import CheckResult, domain_parts
+from ..security import (
+    DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_READ_TIMEOUT,
+    create_default_ssl_context,
+    get_safe_session,
+    resolve_and_validate_destination,
+    safe_request,
+    safe_socket_create_connection,
+)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -28,25 +37,29 @@ def _resolve_host(url: str) -> Tuple[Optional[str], Optional[str]]:
         _, host, _ = domain_parts(url)
         if not host:
             return None, None
-        ip = socket.gethostbyname(host)
-        return host, ip
-    except (socket.gaierror, socket.timeout, OSError):
-        return None, None
+        approved = resolve_and_validate_destination(host)
+        return host, str(approved[0])
     except Exception:
         return None, None
 
 def _get_cert(host: str, port: int = 443):
     """
-    Return (peercert_dict, peercert_binary) using stdlib ssl.
+    Return (peercert_dict, peercert_binary) using safe destination validation and stdlib ssl.
     """
     try:
-        ctx = ssl.create_default_context()
-        with socket.create_connection((host, port), timeout=10) as sock:
-            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-                der = ssock.getpeercert(binary_form=True)
-                info = ssock.getpeercert()
-                return info, der
-    except (socket.timeout, socket.gaierror, ssl.SSLError, OSError) as e:
+        ctx = create_default_ssl_context()
+        sock, _ = safe_socket_create_connection(
+            hostname=host,
+            port=port,
+            timeout=DEFAULT_CONNECT_TIMEOUT,
+            ssl_context=ctx,
+            server_hostname=host,
+        )
+        with sock:
+            der = sock.getpeercert(binary_form=True)
+            info = sock.getpeercert()
+            return info, der
+    except Exception as e:
         raise e
 
 def _parse_not_after(peercert_info) -> Optional[datetime]:
@@ -96,20 +109,37 @@ def _parse_issuer(peercert_info) -> Optional[str]:
 
 def check_ssl_validity(url: str) -> CheckResult:
     # (9) SSL/TLS Certificate Validity
+    scheme = url.split(":", 1)[0].lower()
+    if scheme != "https":
+        return CheckResult(9, "SSL/TLS Certificate Validity", "SKIP", evidence="Plain HTTP URL; SSL certificate check skipped")
+
+    _, host, _ = domain_parts(url)
+    if not host:
+        return CheckResult(9, "SSL/TLS Certificate Validity", "ERROR", evidence="Could not extract host from URL")
+
     try:
-        _, host, _ = domain_parts(url)
-        if not host:
-            return CheckResult(9, "SSL/TLS Certificate Validity", "WARN", evidence="no host")
         info, _ = _get_cert(host, 443)
         not_after = _parse_not_after(info)
         cn = _parse_subject_common_name(info)
         if not_after:
             days_left = (not_after - datetime.now(timezone.utc)).days
-            status = "PASS" if days_left > 14 else "WARN"
-            return CheckResult(9, "SSL/TLS Certificate Validity", status, evidence=f"subject={cn} expires_in_days={days_left}")
-        return CheckResult(9, "SSL/TLS Certificate Validity", "WARN", evidence=f"subject={cn} no expiry parsed")
+            if days_left < 0:
+                status = "FAIL"
+                evidence = f"Certificate expired {abs(days_left)} days ago; subject={cn}"
+            elif days_left <= 14:
+                status = "WARN"
+                evidence = f"Certificate expiring soon: {days_left} days left; subject={cn}"
+            else:
+                status = "PASS"
+                evidence = f"Valid certificate; subject={cn} expires_in_days={days_left}"
+            return CheckResult(9, "SSL/TLS Certificate Validity", status, evidence=evidence)
+        return CheckResult(9, "SSL/TLS Certificate Validity", "WARN", evidence=f"subject={cn} no expiry date parsed")
+    except (ssl.SSLCertVerificationError, ssl.SSLError) as e:
+        return CheckResult(9, "SSL/TLS Certificate Validity", "FAIL", evidence=f"SSL certificate verification failure: {e}")
+    except (socket.timeout, TimeoutError, OSError) as e:
+        return CheckResult(9, "SSL/TLS Certificate Validity", "ERROR", evidence=f"TLS connection error: {e}")
     except Exception as e:
-        return CheckResult(9, "SSL/TLS Certificate Validity", "WARN", evidence=str(e))
+        return CheckResult(9, "SSL/TLS Certificate Validity", "ERROR", evidence=f"SSL check operational error: {e}")
 
 
 def check_https_presence(url: str) -> CheckResult:
@@ -118,28 +148,37 @@ def check_https_presence(url: str) -> CheckResult:
         scheme = url.split(":", 1)[0].lower()
         return CheckResult(10, "Presence of HTTPS", "PASS" if scheme == "https" else "WARN", evidence=f"scheme={scheme}")
     except Exception as e:
-        return CheckResult(10, "Presence of HTTPS", "WARN", evidence=str(e))
+        return CheckResult(10, "Presence of HTTPS", "ERROR", evidence=str(e))
 
 
 def check_certificate_issuer(url: str) -> CheckResult:
     # (11) Certificate Issuer (Reputable CA)
+    scheme = url.split(":", 1)[0].lower()
+    if scheme != "https":
+        return CheckResult(11, "Certificate Issuer (Reputable CA)", "SKIP", evidence="Plain HTTP URL; certificate issuer check skipped")
+
+    _, host, _ = domain_parts(url)
+    if not host:
+        return CheckResult(11, "Certificate Issuer (Reputable CA)", "ERROR", evidence="Could not extract host from URL")
+
     try:
-        _, host, _ = domain_parts(url)
-        if not host:
-            return CheckResult(11, "Certificate Issuer (Reputable CA)", "WARN", evidence="no host")
         info, _ = _get_cert(host, 443)
         issuer = _parse_issuer(info)
         status = "PASS" if issuer else "WARN"
         return CheckResult(11, "Certificate Issuer (Reputable CA)", status, evidence=f"issuer={issuer}")
+    except (ssl.SSLCertVerificationError, ssl.SSLError) as e:
+        return CheckResult(11, "Certificate Issuer (Reputable CA)", "FAIL", evidence=f"Untrusted CA or certificate failure: {e}")
+    except (socket.timeout, TimeoutError, OSError) as e:
+        return CheckResult(11, "Certificate Issuer (Reputable CA)", "ERROR", evidence=f"TLS connection error: {e}")
     except Exception as e:
-        return CheckResult(11, "Certificate Issuer (Reputable CA)", "WARN", evidence=str(e))
+        return CheckResult(11, "Certificate Issuer (Reputable CA)", "ERROR", evidence=f"Certificate issuer check operational error: {e}")
 
 
 def check_security_headers(url: str):
     # (12) Security Headers (CSP/HSTS/XFO)
     results = []
     try:
-        r = requests.get(url, timeout=20, allow_redirects=True)
+        r, _ = safe_request("GET", url, allow_redirects=True)
         headers = {k.lower(): v for k, v in r.headers.items()}
         # CSP
         csp_present = "content-security-policy" in headers
@@ -152,9 +191,9 @@ def check_security_headers(url: str):
         results.append(CheckResult(12, "Security Header: X-Frame-Options", "PASS" if xfo_present else "WARN", evidence=f"X-Frame-Options present={xfo_present}"))
 
     except Exception as e:
-        results.append(CheckResult(12, "Security Header: Content-Security-Policy", "WARN", evidence=str(e)))
-        results.append(CheckResult(12, "Security Header: Strict-Transport-Security", "WARN", evidence=str(e)))
-        results.append(CheckResult(12, "Security Header: X-Frame-Options", "WARN", evidence=str(e)))
+        results.append(CheckResult(12, "Security Header: Content-Security-Policy", "ERROR", evidence=f"Operational error: {e}"))
+        results.append(CheckResult(12, "Security Header: Strict-Transport-Security", "ERROR", evidence=f"Operational error: {e}"))
+        results.append(CheckResult(12, "Security Header: X-Frame-Options", "ERROR", evidence=f"Operational error: {e}"))
     return results
 
 
@@ -163,22 +202,32 @@ def check_ip_reputation(url: str) -> CheckResult:
     try:
         host, ip = _resolve_host(url)
         if not ip:
-            return CheckResult(13, "IP Reputation & Hosting", "WARN", evidence="could not resolve host")
+            return CheckResult(13, "IP Reputation & Hosting", "ERROR", evidence="could not resolve host")
         abuse_key = os.getenv("ABUSEIPDB_API_KEY")
+        if not abuse_key:
+            return CheckResult(13, "IP Reputation & Hosting", "SKIP", evidence=f"ip={ip} (ABUSEIPDB_API_KEY not configured)")
         score = None
-        if abuse_key:
-            q = requests.get(
-                "https://api.abuseipdb.com/api/v2/check",
-                params={"ipAddress": ip, "maxAgeInDays": "90"},
-                headers={"Key": abuse_key, "Accept": "application/json"},
-                timeout=20,
-            )
-            if q.ok:
-                score = (q.json().get("data") or {}).get("abuseConfidenceScore")
-        status = "PASS" if (score is None or (isinstance(score, int) and score < 25)) else "WARN"
-        return CheckResult(13, "IP Reputation & Hosting", status, evidence=f"ip={ip} score={score if score is not None else 0}")
+        client = get_safe_session()
+        q = client.get(
+            "https://api.abuseipdb.com/api/v2/check",
+            params={"ipAddress": ip, "maxAgeInDays": "90"},
+            headers={"Key": abuse_key, "Accept": "application/json"},
+            timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
+        )
+        if not q.ok:
+            return CheckResult(13, "IP Reputation & Hosting", "ERROR", evidence=f"AbuseIPDB API error: {q.status_code}")
+        score = (q.json().get("data") or {}).get("abuseConfidenceScore")
+        if score is not None and isinstance(score, int):
+            if score >= 75:
+                status = "FAIL"
+            elif score >= 25:
+                status = "WARN"
+            else:
+                status = "PASS"
+            return CheckResult(13, "IP Reputation & Hosting", status, evidence=f"ip={ip} score={score}")
+        return CheckResult(13, "IP Reputation & Hosting", "ERROR", evidence="Invalid AbuseIPDB response data")
     except Exception as e:
-        return CheckResult(13, "IP Reputation & Hosting", "WARN", evidence=str(e))
+        return CheckResult(13, "IP Reputation & Hosting", "ERROR", evidence=f"AbuseIPDB check operational error: {e}")
 
 
 def check_server_geolocation(url: str) -> CheckResult:
@@ -189,7 +238,12 @@ def check_server_geolocation(url: str) -> CheckResult:
             return CheckResult(14, "Geolocation of Server", "WARN", evidence="could not resolve host")
         token = os.getenv("IPINFO_TOKEN")
         if token:
-            r = requests.get(f"https://ipinfo.io/{ip}/json", params={"token": token}, timeout=15)
+            client = get_safe_session()
+            r = client.get(
+                f"https://ipinfo.io/{ip}/json",
+                params={"token": token},
+                timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
+            )
             if r.ok:
                 country = (r.json().get("country") or "unknown")
                 return CheckResult(14, "Geolocation of Server", "INFO", evidence=f"country={country}", data=r.json())
@@ -206,7 +260,12 @@ def check_hosting_provider(url: str) -> CheckResult:
             return CheckResult(15, "Hosting Provider Legitimacy", "WARN", evidence="could not resolve host")
         token = os.getenv("IPINFO_TOKEN")
         if token:
-            r = requests.get(f"https://ipinfo.io/{ip}/json", params={"token": token}, timeout=15)
+            client = get_safe_session()
+            r = client.get(
+                f"https://ipinfo.io/{ip}/json",
+                params={"token": token},
+                timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
+            )
             if r.ok:
                 org = r.json().get("org")
                 return CheckResult(15, "Hosting Provider Legitimacy", "INFO", evidence=f"org={org}", data=r.json())

@@ -1,0 +1,490 @@
+{
+  "description": "URL Audit Kit 59-Case Regression Test Matrix",
+  "version": "2.0.0",
+  "generated_at": "2026-10-28",
+  "categories": [
+    "Legitimate public websites",
+    "Malformed and unsupported URLs",
+    "Private, loopback, and link-local destinations",
+    "Alternative IP encodings",
+    "Redirect handling",
+    "TLS certificate failures",
+    "Suspicious and impersonating domains",
+    "IDN and Punycode domains",
+    "Long URLs and sensitive query parameters",
+    "DNS and external-service failures",
+    "Concurrency and timeout cases"
+  ],
+  "cases": [
+    {
+      "id": 1,
+      "category": "Legitimate public websites",
+      "url": "https://www.google.com",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Verified official brand asset with valid TLS and active registration"
+    },
+    {
+      "id": 2,
+      "category": "Legitimate public websites",
+      "url": "https://www.apple.com",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Verified official brand asset with valid TLS"
+    },
+    {
+      "id": 3,
+      "category": "Legitimate public websites",
+      "url": "https://www.microsoft.com",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Verified official brand asset with valid TLS"
+    },
+    {
+      "id": 4,
+      "category": "Legitimate public websites",
+      "url": "https://www.amazon.com",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Verified official brand asset with valid TLS"
+    },
+    {
+      "id": 5,
+      "category": "Legitimate public websites",
+      "url": "https://en.wikipedia.org",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Legitimate public domain with clean reputation"
+    },
+    {
+      "id": 6,
+      "category": "Legitimate public websites",
+      "url": "https://example.com",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "RFC 2606 reserved documentation domain, verified clean"
+    },
+    {
+      "id": 7,
+      "category": "Malformed and unsupported URLs",
+      "url": "javascript:alert(1)",
+      "expected_http_status": 400,
+      "expected_error": "unsupported_scheme",
+      "security_rule": "Reject non-http/https schemes at API gateway before runner allocation"
+    },
+    {
+      "id": 8,
+      "category": "Malformed and unsupported URLs",
+      "url": "file:///etc/passwd",
+      "expected_http_status": 400,
+      "expected_error": "unsupported_scheme",
+      "security_rule": "Reject file:// URI scheme to prevent local file inclusion"
+    },
+    {
+      "id": 9,
+      "category": "Malformed and unsupported URLs",
+      "url": "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+      "expected_http_status": 400,
+      "expected_error": "unsupported_scheme",
+      "security_rule": "Reject data: URIs at ingress gateway"
+    },
+    {
+      "id": 10,
+      "category": "Malformed and unsupported URLs",
+      "url": "ftp://ftp.example.com/file.txt",
+      "expected_http_status": 400,
+      "expected_error": "unsupported_scheme",
+      "security_rule": "Reject FTP protocol"
+    },
+    {
+      "id": 11,
+      "category": "Malformed and unsupported URLs",
+      "url": "https://",
+      "expected_http_status": 400,
+      "expected_error": "empty_hostname",
+      "security_rule": "Reject empty authority/hostname"
+    },
+    {
+      "id": 12,
+      "category": "Malformed and unsupported URLs",
+      "url": "https://example.com:99999/",
+      "expected_http_status": 400,
+      "expected_error": "invalid_port",
+      "security_rule": "Reject out-of-range port number (>65535)"
+    },
+    {
+      "id": 13,
+      "category": "Private, loopback, and link-local destinations",
+      "url": "http://127.0.0.1/admin",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Block IPv4 loopback destination (127.0.0.0/8)"
+    },
+    {
+      "id": 14,
+      "category": "Private, loopback, and link-local destinations",
+      "url": "http://localhost:8080/",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Block localhost hostname resolution to loopback"
+    },
+    {
+      "id": 15,
+      "category": "Private, loopback, and link-local destinations",
+      "url": "http://10.0.0.1/internal",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Block RFC 1918 private Class A network (10.0.0.0/8)"
+    },
+    {
+      "id": 16,
+      "category": "Private, loopback, and link-local destinations",
+      "url": "http://172.16.0.1/status",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Block RFC 1918 private Class B network (172.16.0.0/12)"
+    },
+    {
+      "id": 17,
+      "category": "Private, loopback, and link-local destinations",
+      "url": "http://192.168.1.1/router",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Block RFC 1918 private Class C network (192.168.0.0/16)"
+    },
+    {
+      "id": 18,
+      "category": "Private, loopback, and link-local destinations",
+      "url": "http://169.254.169.254/latest/meta-data/",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Explicitly block cloud metadata service address (169.254.169.254)"
+    },
+    {
+      "id": 19,
+      "category": "Alternative IP encodings",
+      "url": "http://2130706433/",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Canonicalize 32-bit decimal integer 2130706433 to 127.0.0.1 and block"
+    },
+    {
+      "id": 20,
+      "category": "Alternative IP encodings",
+      "url": "http://0x7f000001/",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Canonicalize hexadecimal 0x7f000001 to 127.0.0.1 and block"
+    },
+    {
+      "id": 21,
+      "category": "Alternative IP encodings",
+      "url": "http://0177.0.0.1/",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Canonicalize octal-prefixed 0177.0.0.1 to 127.0.0.1 and block"
+    },
+    {
+      "id": 22,
+      "category": "Alternative IP encodings",
+      "url": "http://[::ffff:127.0.0.1]/",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Canonicalize IPv4-mapped IPv6 loopback and block"
+    },
+    {
+      "id": 23,
+      "category": "Alternative IP encodings",
+      "url": "http://[::1]/",
+      "expected_http_status": 400,
+      "expected_error": "ssrf_blocked",
+      "security_rule": "Block IPv6 loopback address ::1"
+    },
+    {
+      "id": 24,
+      "category": "Redirect handling",
+      "url": "https://mock-redirect.local/clean-hop",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Follow safe 1-hop redirect to public verified destination"
+    },
+    {
+      "id": 25,
+      "category": "Redirect handling",
+      "url": "https://mock-redirect.local/to-private-ip",
+      "expected_http_status": 200,
+      "expected_check_status": "FAIL",
+      "security_rule": "Reject redirect destination resolving to private IP 192.168.1.1 at hop 2"
+    },
+    {
+      "id": 26,
+      "category": "Redirect handling",
+      "url": "https://mock-redirect.local/loop-a",
+      "expected_http_status": 200,
+      "expected_check_status": "ERROR",
+      "security_rule": "Detect circular redirect loop and terminate"
+    },
+    {
+      "id": 27,
+      "category": "Redirect handling",
+      "url": "https://mock-redirect.local/excessive-hops",
+      "expected_http_status": 200,
+      "expected_check_status": "WARN",
+      "security_rule": "Cap maximum redirects at 5 hops"
+    },
+    {
+      "id": 28,
+      "category": "Redirect handling",
+      "url": "https://mock-redirect.local/to-javascript",
+      "expected_http_status": 200,
+      "expected_check_status": "ERROR",
+      "security_rule": "Reject intermediate redirect to unsupported scheme"
+    },
+    {
+      "id": 29,
+      "category": "TLS certificate failures",
+      "url": "https://expired-cert.mock.local/",
+      "expected_http_status": 200,
+      "expected_check_status": "FAIL",
+      "security_rule": "Identify expired TLS certificate"
+    },
+    {
+      "id": 30,
+      "category": "TLS certificate failures",
+      "url": "https://wrong-host.mock.local/",
+      "expected_http_status": 200,
+      "expected_check_status": "FAIL",
+      "security_rule": "Identify hostname mismatch on TLS certificate"
+    },
+    {
+      "id": 31,
+      "category": "TLS certificate failures",
+      "url": "https://self-signed.mock.local/",
+      "expected_http_status": 200,
+      "expected_check_status": "FAIL",
+      "security_rule": "Identify self-signed certificate untrusted by root CA store"
+    },
+    {
+      "id": 32,
+      "category": "TLS certificate failures",
+      "url": "https://untrusted-ca.mock.local/",
+      "expected_http_status": 200,
+      "expected_check_status": "FAIL",
+      "security_rule": "Identify certificate from untrusted CA"
+    },
+    {
+      "id": 33,
+      "category": "TLS certificate failures",
+      "url": "http://plain-http-only.example.com/",
+      "expected_http_status": 200,
+      "expected_check_status": "SKIP",
+      "security_rule": "Skip TLS validity check on plain HTTP schemes without recording error"
+    },
+    {
+      "id": 34,
+      "category": "Suspicious and impersonating domains",
+      "url": "https://paypal.com.account-update.attacker.com/login",
+      "expected_http_status": 200,
+      "expected_verdict": "MALICIOUS",
+      "security_rule": "Detect deceptive subdomain structure embedding brand with login keywords"
+    },
+    {
+      "id": 35,
+      "category": "Suspicious and impersonating domains",
+      "url": "https://appleid.apple.com.verify-login.org/auth",
+      "expected_http_status": 200,
+      "expected_verdict": "MALICIOUS",
+      "security_rule": "Detect Apple ID brand impersonation in subdomain"
+    },
+    {
+      "id": 36,
+      "category": "Suspicious and impersonating domains",
+      "url": "https://login.microsoft.com.secure-portal.org/",
+      "expected_http_status": 200,
+      "expected_verdict": "MALICIOUS",
+      "security_rule": "Detect Microsoft login deceptive subdomain"
+    },
+    {
+      "id": 37,
+      "category": "Suspicious and impersonating domains",
+      "url": "https://paypal-security-verification.com/login",
+      "expected_http_status": 200,
+      "expected_verdict": "MALICIOUS",
+      "security_rule": "Detect PayPal brand embedded in third-party registrable domain"
+    },
+    {
+      "id": 38,
+      "category": "Suspicious and impersonating domains",
+      "url": "https://amazon-account-support.org/help",
+      "expected_http_status": 200,
+      "expected_verdict": "MALICIOUS",
+      "security_rule": "Detect Amazon support brand impersonation"
+    },
+    {
+      "id": 39,
+      "category": "Suspicious and impersonating domains",
+      "url": "https://netflix-billing-update.net/card",
+      "expected_http_status": 200,
+      "expected_verdict": "MALICIOUS",
+      "security_rule": "Detect Netflix billing update credential harvesting domain"
+    },
+    {
+      "id": 40,
+      "category": "Suspicious and impersonating domains",
+      "url": "https://binance-kyc-verify.io/auth",
+      "expected_http_status": 200,
+      "expected_verdict": "MALICIOUS",
+      "security_rule": "Detect Binance cryptocurrency wallet/KYC phishing"
+    },
+    {
+      "id": 41,
+      "category": "IDN and Punycode domains",
+      "url": "https://xn--pple-43d.com/store",
+      "expected_http_status": 200,
+      "expected_verdict": "MALICIOUS",
+      "security_rule": "Detect Cyrillic 'a' (U+0430) mixed-script homoglyph spoofing apple.com"
+    },
+    {
+      "id": 42,
+      "category": "IDN and Punycode domains",
+      "url": "https://xn--googl-3we.com/",
+      "expected_http_status": 200,
+      "expected_verdict": "MALICIOUS",
+      "security_rule": "Detect Cyrillic 'e' (U+0435) homoglyph spoofing google.com"
+    },
+    {
+      "id": 43,
+      "category": "IDN and Punycode domains",
+      "url": "https://xn--mnchen-3ya.de/",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Allow legitimate single-script German IDN münchen.de without false positive"
+    },
+    {
+      "id": 44,
+      "category": "IDN and Punycode domains",
+      "url": "https://xn--fiqs8s.cn/",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Allow legitimate Chinese IDN 中国.cn in Han script"
+    },
+    {
+      "id": 45,
+      "category": "IDN and Punycode domains",
+      "url": "https://café.fr/menu",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Allow legitimate French IDN with accented e"
+    },
+    {
+      "id": 46,
+      "category": "IDN and Punycode domains",
+      "url": "https://xn--invalid-punycode-%%%%--.com/",
+      "expected_http_status": 400,
+      "expected_error": "invalid_syntax",
+      "security_rule": "Reject malformed Punycode IDNA sequence"
+    },
+    {
+      "id": 47,
+      "category": "Long URLs and sensitive query parameters",
+      "url": "https://example.com/search?q=very-long-query-string-parameter-designed-to-exceed-the-standard-maximum-length-threshold-of-one-hundred-and-twenty-characters-in-total-url-structure",
+      "expected_http_status": 200,
+      "expected_check_status": "WARN",
+      "security_rule": "Flag URL length > 120 characters as WARN"
+    },
+    {
+      "id": 48,
+      "category": "Long URLs and sensitive query parameters",
+      "url": "https://example.com/login?token=SECRET_BEARER_TOKEN_999&key=API_KEY_SUPER_SECRET",
+      "expected_http_status": 200,
+      "security_rule": "Preserve scan while redacting credentials from public IOC tables"
+    },
+    {
+      "id": 49,
+      "category": "Long URLs and sensitive query parameters",
+      "url": "https://example.com/checkout?card=4111111111111111&cvv=123",
+      "expected_http_status": 200,
+      "security_rule": "Redact financial card parameters from telemetry"
+    },
+    {
+      "id": 50,
+      "category": "Long URLs and sensitive query parameters",
+      "url": "https://legitimate-blog.example.org/articles/how-google-ranks-websites",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Do not flag innocent brand name in URL path when hostname is clean"
+    },
+    {
+      "id": 51,
+      "category": "Long URLs and sensitive query parameters",
+      "url": "https://developer.example.org/docs/amazon-aws-s3-integration",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Allow legitimate technical documentation mentioning brand in path"
+    },
+    {
+      "id": 52,
+      "category": "DNS and external-service failures",
+      "url": "https://nonexistent-domain-test-12345xyz-impossible.com/",
+      "expected_http_status": 200,
+      "expected_check_status": "WARN",
+      "security_rule": "Explicitly warn on NXDOMAIN (domain non-existent), never treat as clean proof"
+    },
+    {
+      "id": 53,
+      "category": "DNS and external-service failures",
+      "url": "https://mock-dns-timeout.local/",
+      "expected_http_status": 200,
+      "expected_check_status": "ERROR",
+      "security_rule": "Classify DNS timeout as ERROR (operational failure, 0 risk points)"
+    },
+    {
+      "id": 54,
+      "category": "DNS and external-service failures",
+      "url": "https://mock-dns-servfail.local/",
+      "expected_http_status": 200,
+      "expected_check_status": "ERROR",
+      "security_rule": "Classify temporary DNS server failure as ERROR"
+    },
+    {
+      "id": 55,
+      "category": "DNS and external-service failures",
+      "url": "https://mock-reputation-503.local/",
+      "expected_http_status": 200,
+      "expected_check_status": "ERROR",
+      "security_rule": "Classify third-party threat feed 503 outage as ERROR (not malicious FAIL)"
+    },
+    {
+      "id": 56,
+      "category": "Concurrency and timeout cases",
+      "url": "https://mock-slow-scan-deadline.local/",
+      "expected_http_status": 200,
+      "expected_verdict": "INCONCLUSIVE",
+      "security_rule": "Abort at 12s scan deadline, return partial ERRORs, evaluate to INCONCLUSIVE"
+    },
+    {
+      "id": 57,
+      "category": "Concurrency and timeout cases",
+      "url": "https://batch-target-1.mock.local/",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Complete 15 checks within 8-worker concurrent pool"
+    },
+    {
+      "id": 58,
+      "category": "Concurrency and timeout cases",
+      "url": "https://batch-target-2.mock.local/",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Complete 15 checks within 8-worker concurrent pool"
+    },
+    {
+      "id": 59,
+      "category": "Concurrency and timeout cases",
+      "url": "https://batch-target-3.mock.local/",
+      "expected_http_status": 200,
+      "expected_verdict": "BENIGN",
+      "security_rule": "Complete 15 checks within 8-worker concurrent pool"
+    }
+  ]
+}

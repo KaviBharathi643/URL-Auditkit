@@ -51,7 +51,7 @@ def _normalize_per_check(per_check: Any) -> List[Dict[str, str]]:
 
 def _normalize_verdict(value: Any) -> str:
     text = str(value or "").strip().upper()
-    if text in {"BENIGN", "SUSPICIOUS", "MALICIOUS"}:
+    if text in {"BENIGN", "SUSPICIOUS", "MALICIOUS", "INCONCLUSIVE"}:
         return text
     if text in {"LOW", "SAFE", "MINIMAL"}:
         return "BENIGN"
@@ -59,7 +59,9 @@ def _normalize_verdict(value: Any) -> str:
         return "SUSPICIOUS"
     if text in {"HIGH", "CRITICAL", "SEVERE", "DANGEROUS"}:
         return "MALICIOUS"
-    return "UNKNOWN"
+    if text in {"INCONCLUSIVE", "UNCERTAIN", "UNKNOWN"}:
+        return "INCONCLUSIVE"
+    return "INCONCLUSIVE"
 
 
 def _normalize_report(report: Any) -> Dict[str, Any]:

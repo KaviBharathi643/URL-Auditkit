@@ -66,6 +66,7 @@ export default function HistoryPage() {
             <option value="BENIGN">BENIGN</option>
             <option value="SUSPICIOUS">SUSPICIOUS</option>
             <option value="MALICIOUS">MALICIOUS</option>
+            <option value="INCONCLUSIVE">INCONCLUSIVE</option>
           </select>
           <button className="secondary-button" onClick={() => load(1)}>
             Apply

@@ -2,49 +2,62 @@ import { createTheme } from '@mui/material/styles';
 
 const socTheme = createTheme({
   palette: {
-    mode: 'dark',
+    mode: 'light',
     background: {
-      default: '#0b0f17',
-      paper: '#111827',
+      default: '#FFF7F8',
+      paper: '#FFFFFF',
     },
     primary: {
-      main: '#06b6d4',
+      main: '#FFB7C5',
+      light: '#FFE2E8',
+      dark: '#E06D85',
+      contrastText: '#2A1822',
     },
     secondary: {
-      main: '#3b82f6',
+      main: '#F2C7C7',
+      light: '#FCECEC',
+      dark: '#D89FA1',
+      contrastText: '#2A1822',
     },
     success: {
-      main: '#10b981',
+      main: '#2E7D32',
+      light: '#D5F3D8',
+      contrastText: '#FFFFFF',
     },
     warning: {
-      main: '#f59e0b',
+      main: '#D97706',
+      light: '#FEF3C7',
+      contrastText: '#2A1822',
     },
     error: {
-      main: '#ef4444',
+      main: '#D8224C',
+      light: '#FFE4E8',
+      contrastText: '#FFFFFF',
     },
     text: {
-      primary: '#e5eefb',
-      secondary: '#94a3b8',
+      primary: '#2A1822',
+      secondary: '#6E5562',
     },
-    divider: '#1f2937',
+    divider: '#F2C7C7',
   },
   shape: {
-    borderRadius: 12,
+    borderRadius: 14,
   },
   typography: {
     fontFamily: '"Inter", sans-serif',
-    h1: { fontFamily: '"Space Grotesk", "Inter", sans-serif' },
-    h2: { fontFamily: '"Space Grotesk", "Inter", sans-serif' },
-    h3: { fontFamily: '"Space Grotesk", "Inter", sans-serif' },
-    h4: { fontFamily: '"Space Grotesk", "Inter", sans-serif' },
-    h5: { fontFamily: '"Space Grotesk", "Inter", sans-serif' },
-    h6: { fontFamily: '"Space Grotesk", "Inter", sans-serif' },
+    h1: { fontFamily: '"Space Grotesk", "Inter", sans-serif', color: '#2A1822' },
+    h2: { fontFamily: '"Space Grotesk", "Inter", sans-serif', color: '#2A1822' },
+    h3: { fontFamily: '"Space Grotesk", "Inter", sans-serif', color: '#2A1822' },
+    h4: { fontFamily: '"Space Grotesk", "Inter", sans-serif', color: '#2A1822' },
+    h5: { fontFamily: '"Space Grotesk", "Inter", sans-serif', color: '#2A1822' },
+    h6: { fontFamily: '"Space Grotesk", "Inter", sans-serif', color: '#2A1822' },
   },
   components: {
     MuiCssBaseline: {
       styleOverrides: {
         body: {
-          backgroundColor: '#0b0f17',
+          backgroundColor: '#FFF7F8',
+          color: '#2A1822',
         },
       },
     },
