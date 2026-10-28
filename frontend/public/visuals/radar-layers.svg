@@ -1,0 +1,19 @@
+<svg width="600" height="600" viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Radar layers">
+  <rect width="600" height="600" fill="#0b0f17" />
+  <g stroke="#16415a" fill="none" opacity="0.9">
+    <circle cx="300" cy="300" r="60" />
+    <circle cx="300" cy="300" r="120" />
+    <circle cx="300" cy="300" r="180" />
+    <circle cx="300" cy="300" r="240" />
+  </g>
+  <g stroke="#1f4c66" opacity="0.7">
+    <line x1="300" y1="20" x2="300" y2="580" />
+    <line x1="20" y1="300" x2="580" y2="300" />
+    <line x1="90" y1="90" x2="510" y2="510" />
+    <line x1="90" y1="510" x2="510" y2="90" />
+  </g>
+  <path d="M300 300 L540 220 A250 250 0 0 1 380 525 Z" fill="rgba(6,182,212,0.25)" />
+  <circle cx="420" cy="260" r="6" fill="#ef4444" />
+  <circle cx="242" cy="184" r="4" fill="#10b981" />
+  <circle cx="188" cy="392" r="5" fill="#f59e0b" />
+</svg>

@@ -1,0 +1,18 @@
+<svg width="1200" height="800" viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Cyber grid background">
+  <rect width="1200" height="800" fill="#0b0f17" />
+  <g stroke="#173044" stroke-width="1" opacity="0.6">
+    <path d="M0 40h1200" /><path d="M0 80h1200" /><path d="M0 120h1200" /><path d="M0 160h1200" />
+    <path d="M0 200h1200" /><path d="M0 240h1200" /><path d="M0 280h1200" /><path d="M0 320h1200" />
+    <path d="M0 360h1200" /><path d="M0 400h1200" /><path d="M0 440h1200" /><path d="M0 480h1200" />
+    <path d="M0 520h1200" /><path d="M0 560h1200" /><path d="M0 600h1200" /><path d="M0 640h1200" />
+    <path d="M0 680h1200" /><path d="M0 720h1200" /><path d="M0 760h1200" />
+    <path d="M40 0v800" /><path d="M80 0v800" /><path d="M120 0v800" /><path d="M160 0v800" />
+    <path d="M200 0v800" /><path d="M240 0v800" /><path d="M280 0v800" /><path d="M320 0v800" />
+    <path d="M360 0v800" /><path d="M400 0v800" /><path d="M440 0v800" /><path d="M480 0v800" />
+    <path d="M520 0v800" /><path d="M560 0v800" /><path d="M600 0v800" /><path d="M640 0v800" />
+    <path d="M680 0v800" /><path d="M720 0v800" /><path d="M760 0v800" /><path d="M800 0v800" />
+    <path d="M840 0v800" /><path d="M880 0v800" /><path d="M920 0v800" /><path d="M960 0v800" />
+    <path d="M1000 0v800" /><path d="M1040 0v800" /><path d="M1080 0v800" /><path d="M1120 0v800" />
+    <path d="M1160 0v800" />
+  </g>
+</svg>

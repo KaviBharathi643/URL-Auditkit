@@ -1,0 +1,19 @@
+<svg width="880" height="560" viewBox="0 0 880 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="URL scanner illustration">
+  <rect width="880" height="560" fill="#0b0f17" />
+  <rect x="70" y="60" width="740" height="440" rx="18" fill="#111827" stroke="#1f2937" />
+  <rect x="110" y="104" width="660" height="64" rx="10" fill="#0e1828" stroke="#1f2937" />
+  <rect x="126" y="122" width="270" height="28" rx="6" fill="#1b2738" />
+  <circle cx="744" cy="136" r="14" fill="#06b6d4" />
+  <circle cx="710" cy="136" r="14" fill="#3b82f6" />
+  <g transform="translate(200 240)">
+    <circle cx="180" cy="120" r="112" fill="none" stroke="#1f4c66" />
+    <circle cx="180" cy="120" r="84" fill="none" stroke="#1f4c66" />
+    <circle cx="180" cy="120" r="56" fill="none" stroke="#1f4c66" />
+    <path d="M180 120L290 84A126 126 0 0 1 250 205Z" fill="rgba(6,182,212,0.28)" />
+    <circle cx="250" cy="160" r="6" fill="#ef4444" />
+    <circle cx="156" cy="74" r="5" fill="#10b981" />
+  </g>
+  <rect x="530" y="240" width="210" height="32" rx="8" fill="#0e1828" stroke="#1f2937" />
+  <rect x="530" y="284" width="190" height="32" rx="8" fill="#0e1828" stroke="#1f2937" />
+  <rect x="530" y="328" width="160" height="32" rx="8" fill="#0e1828" stroke="#1f2937" />
+</svg>

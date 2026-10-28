@@ -1,0 +1,28 @@
+<svg width="1024" height="620" viewBox="0 0 1024 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SOC analyst dashboard illustration">
+  <rect width="1024" height="620" fill="#0b0f17" />
+  <rect x="40" y="42" width="944" height="536" rx="20" fill="#111827" stroke="#1f2937" />
+  <rect x="72" y="80" width="880" height="64" rx="12" fill="#0e1828" stroke="#1f2937" />
+  <rect x="88" y="98" width="260" height="28" rx="8" fill="#1d2a3d" />
+  <rect x="72" y="170" width="430" height="380" rx="16" fill="#0e1828" stroke="#1f2937" />
+  <rect x="522" y="170" width="430" height="180" rx="16" fill="#0e1828" stroke="#1f2937" />
+  <rect x="522" y="370" width="430" height="180" rx="16" fill="#0e1828" stroke="#1f2937" />
+  <g stroke="#26445f" stroke-width="2" fill="none">
+    <path d="M98 510h386" />
+    <path d="M98 470h386" />
+    <path d="M98 430h386" />
+    <path d="M98 390h386" />
+  </g>
+  <g fill="#06b6d4" opacity="0.85">
+    <circle cx="120" cy="510" r="5" /><circle cx="180" cy="470" r="5" /><circle cx="236" cy="430" r="5" /><circle cx="300" cy="390" r="5" /><circle cx="372" cy="360" r="5" />
+  </g>
+  <g>
+    <rect x="546" y="198" width="188" height="32" rx="8" fill="#1a2738" />
+    <rect x="546" y="244" width="310" height="24" rx="8" fill="#1a2738" />
+    <rect x="546" y="282" width="278" height="24" rx="8" fill="#1a2738" />
+  </g>
+  <g>
+    <rect x="546" y="398" width="188" height="32" rx="8" fill="#1a2738" />
+    <rect x="546" y="444" width="340" height="24" rx="8" fill="#1a2738" />
+    <rect x="546" y="482" width="280" height="24" rx="8" fill="#1a2738" />
+  </g>
+</svg>

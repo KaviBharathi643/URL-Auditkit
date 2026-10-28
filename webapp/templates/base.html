@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}URL Audit Kit{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&family=Material+Symbols+Rounded:FILL,wght,GRAD,opsz@0,400,0,48&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}" />
+    {% block head_extra %}{% endblock %}
+  </head>
+  <body class="app-surface">
+    <header class="app-shell">
+      <div class="app-top-bar">
+        <div class="brand">
+          <span class="brand-icon material-symbols-rounded" aria-hidden="true">shield_person</span>
+          <div>
+            <a class="brand-title" href="/">URL Audit Kit</a>
+            <p class="brand-subtitle">41-point threat intelligence assessment</p>
+          </div>
+        </div>
+        <div class="headline">
+          <p class="headline-label">Threat Surface</p>
+          <h1>Audit, Enrich, Resolve.</h1>
+        </div>
+        <div class="meta">
+          <span class="material-symbols-rounded" aria-hidden="true">schedule</span>
+          <span>{{ current_year | default(2024) }}</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="app-content">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="app-footer">
+      <span>&copy; {{ current_year | default(2024) }} URL Audit Kit · Built for security responders</span>
+    </footer>
+
+    <script type="module">
+      import "https://esm.run/@material/web@1.5.0/all.js";
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/motion@10.16.4/dist/motion.min.js" defer></script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

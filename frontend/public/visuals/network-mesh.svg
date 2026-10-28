@@ -1,0 +1,21 @@
+<svg width="1000" height="520" viewBox="0 0 1000 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Network mesh">
+  <rect width="1000" height="520" fill="#0b0f17" />
+  <g stroke="#1f4c66" stroke-width="1.2" opacity="0.8">
+    <path d="M110 90L220 150L350 88L510 170L660 120L840 200" />
+    <path d="M140 280L250 220L420 280L590 230L760 300L900 250" />
+    <path d="M80 420L230 360L370 420L560 350L730 390L920 340" />
+    <path d="M220 150L250 220L230 360" />
+    <path d="M350 88L420 280L370 420" />
+    <path d="M510 170L590 230L560 350" />
+    <path d="M660 120L760 300L730 390" />
+    <path d="M840 200L900 250L920 340" />
+  </g>
+  <g fill="#06b6d4">
+    <circle cx="110" cy="90" r="6" /><circle cx="220" cy="150" r="7" /><circle cx="350" cy="88" r="6" />
+    <circle cx="510" cy="170" r="8" /><circle cx="660" cy="120" r="7" /><circle cx="840" cy="200" r="8" />
+    <circle cx="140" cy="280" r="7" /><circle cx="250" cy="220" r="8" /><circle cx="420" cy="280" r="7" />
+    <circle cx="590" cy="230" r="7" /><circle cx="760" cy="300" r="8" /><circle cx="900" cy="250" r="6" />
+    <circle cx="80" cy="420" r="6" /><circle cx="230" cy="360" r="8" /><circle cx="370" cy="420" r="7" />
+    <circle cx="560" cy="350" r="8" /><circle cx="730" cy="390" r="7" /><circle cx="920" cy="340" r="6" />
+  </g>
+</svg>

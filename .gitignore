@@ -10,13 +10,28 @@ dist/
 
 # Virtual envs
 .venv/
+.venv*/
 venv/
 env/
+
+# Node / Next.js
+node_modules/
+.next/
+.next*/
+*.local
+
+# Databases & local data
+data/*.db
+data/*.sqlite
+*.db
+*.sqlite
+*.sqlite3
 
 # OS / editor
 .DS_Store
 .vscode/
 .idea/
+.claude/
 
 # Project outputs
 report.json

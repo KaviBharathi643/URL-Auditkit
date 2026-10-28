@@ -3,6 +3,7 @@ import ssl
 import socket
 import json
 import time
+from functools import lru_cache
 from datetime import datetime, timezone
 from typing import Tuple, Optional
 
@@ -10,10 +11,18 @@ import requests
 
 from ..utils import CheckResult, domain_parts
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
 # -------------------------------
 # Helpers
 # -------------------------------
 
+@lru_cache(maxsize=512)
 def _resolve_host(url: str) -> Tuple[Optional[str], Optional[str]]:
     try:
         _, host, _ = domain_parts(url)
@@ -21,6 +30,8 @@ def _resolve_host(url: str) -> Tuple[Optional[str], Optional[str]]:
             return None, None
         ip = socket.gethostbyname(host)
         return host, ip
+    except (socket.gaierror, socket.timeout, OSError):
+        return None, None
     except Exception:
         return None, None
 
@@ -28,12 +39,15 @@ def _get_cert(host: str, port: int = 443):
     """
     Return (peercert_dict, peercert_binary) using stdlib ssl.
     """
-    ctx = ssl.create_default_context()
-    with socket.create_connection((host, port), timeout=10) as sock:
-        with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-            der = ssock.getpeercert(binary_form=True)
-            info = ssock.getpeercert()
-            return info, der
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((host, port), timeout=10) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                der = ssock.getpeercert(binary_form=True)
+                info = ssock.getpeercert()
+                return info, der
+    except (socket.timeout, socket.gaierror, ssl.SSLError, OSError) as e:
+        raise e
 
 def _parse_not_after(peercert_info) -> Optional[datetime]:
     """
@@ -210,6 +224,12 @@ def check_page_load_speed(url: str):
       B) If PSI fails for both, fall back to GTmetrix v2 (if GTMETRIX_API_KEY is set).
     You can disable GTmetrix fallback by setting DISABLE_GTMETRIX=1 in .env
     """
+    psi_timeout = _env_int("PAGESPEED_TIMEOUT_SECONDS", 12)
+    gtmetrix_submit_timeout = _env_int("GTMETRIX_SUBMIT_TIMEOUT_SECONDS", 15)
+    gtmetrix_poll_timeout = _env_int("GTMETRIX_POLL_TIMEOUT_SECONDS", 10)
+    gtmetrix_poll_interval = _env_int("GTMETRIX_POLL_INTERVAL_SECONDS", 2)
+    gtmetrix_max_polls = _env_int("GTMETRIX_MAX_POLLS", 6)
+
     def _psi_once(strategy: str):
         try:
             psi_params = {"url": url, "strategy": strategy, "category": "performance"}
@@ -220,7 +240,7 @@ def check_page_load_speed(url: str):
             psi = requests.get(
                 "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
                 params=psi_params,
-                timeout=60,
+                timeout=psi_timeout,
             )
             if psi.ok:
                 j = psi.json()
@@ -290,7 +310,7 @@ def check_page_load_speed(url: str):
                 auth=(key, "random"),
                 headers=headers_post,
                 json=payload,
-                timeout=60,
+                timeout=gtmetrix_submit_timeout,
             )
             if not r.ok:
                 return CheckResult(16, "Page Load Speed", "WARN",
@@ -304,10 +324,15 @@ def check_page_load_speed(url: str):
             if not poll:
                 return CheckResult(16, "Page Load Speed", "WARN", evidence="GTmetrix: no poll URL")
 
-            # Poll ~3.5 minutes (42 * 5s)
-            for _ in range(42):
-                time.sleep(5)
-                g = requests.get(poll, auth=(key, "random"), headers=headers_get, timeout=60)
+            # Bound polling time to avoid long-running scans.
+            for _ in range(gtmetrix_max_polls):
+                time.sleep(gtmetrix_poll_interval)
+                g = requests.get(
+                    poll,
+                    auth=(key, "random"),
+                    headers=headers_get,
+                    timeout=gtmetrix_poll_timeout,
+                )
                 if not g.ok:
                     continue
                 dj = g.json()
@@ -352,7 +377,7 @@ def check_mozilla_observatory(url: str) -> CheckResult:
     try:
         host = (urlparse(url).hostname or "").lower()
         if not host:
-            return CheckResult(16, "Mozilla Observatory", "WARN", evidence="no host")
+            return CheckResult(17, "Mozilla Observatory", "WARN", evidence="no host")
 
         base = "https://http-observatory.security.mozilla.org/api/v1"
 
@@ -375,12 +400,12 @@ def check_mozilla_observatory(url: str) -> CheckResult:
                 last_err = f"transient {code}: {body}"
                 time.sleep(2 * attempts)  # small backoff then retry
                 continue
-            return CheckResult(16, "Mozilla Observatory", "WARN",
+            return CheckResult(17, "Mozilla Observatory", "WARN",
                                evidence=f"start {code}: {body}")
 
         if not start.ok:
             # after retries, still transient → mark as INFO (non-blocking)
-            return CheckResult(16, "Mozilla Observatory", "INFO",
+            return CheckResult(17, "Mozilla Observatory", "INFO",
                                evidence=last_err or "transient error")
 
         last_err = None
@@ -401,17 +426,17 @@ def check_mozilla_observatory(url: str) -> CheckResult:
                 ev = []
                 if grade: ev.append(f"grade={grade}")
                 if isinstance(score, int): ev.append(f"score={score}")
-                return CheckResult(16, "Mozilla Observatory", "INFO",
+                return CheckResult(17, "Mozilla Observatory", "INFO",
                                    evidence=", ".join(ev) or "finished",
                                    data=j)
 
             if state in ("FAILED", "ABORTED"):
-                return CheckResult(16, "Mozilla Observatory", "WARN",
+                return CheckResult(17, "Mozilla Observatory", "WARN",
                                    evidence=f"state={state}")
 
             last_err = f"state={state or 'unknown'}"
 
-        return CheckResult(16, "Mozilla Observatory", "WARN",
+        return CheckResult(17, "Mozilla Observatory", "WARN",
                            evidence=last_err or "timeout")
     except Exception as e:
-        return CheckResult(16, "Mozilla Observatory", "WARN", evidence=str(e))
+        return CheckResult(17, "Mozilla Observatory", "WARN", evidence=str(e))

@@ -46,10 +46,15 @@ def get_cert_chain(hostname: str, port: int = 443):
     except Exception:
         return None
 
+_EXTRACTOR = tldextract.TLDExtract(fallback_to_snapshot=True)
+
 def domain_parts(url: str):
     parsed = urlparse(url)
     host = parsed.hostname or ""
-    ext = tldextract.extract(host)
+    try:
+        ext = _EXTRACTOR(host)
+    except Exception:
+        ext = tldextract.TLDExtract(suffix_list_urls=())(host)
     return parsed, host, ext
 
 def txt_records(domain: str) -> List[str]:

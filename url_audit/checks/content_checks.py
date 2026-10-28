@@ -5,28 +5,34 @@ from bs4 import BeautifulSoup
 
 def check_content_quality(url: str):
     # (17)
-    resp, html, soup = fetch(url)
-    if not html:
-        return CheckResult(17, "Website Content and Design Quality", "WARN", evidence="Could not fetch HTML")
-    gib = bool(re.search(r"(lorem ipsum|asdfgh|qwerty)", html, re.I))
-    return CheckResult(17, "Website Content and Design Quality", "WARN" if gib else "PASS", evidence=f"gibberish={gib}")
+    try:
+        resp, html, soup = fetch(url)
+        if not html:
+            return CheckResult(17, "Website Content and Design Quality", "WARN", evidence="Could not fetch HTML")
+        gib = bool(re.search(r"(lorem ipsum|asdfgh|qwerty|xxxxx|test test test)", html, re.I))
+        return CheckResult(17, "Website Content and Design Quality", "WARN" if gib else "PASS", evidence=f"gibberish={gib}")
+    except Exception as e:
+        return CheckResult(17, "Website Content and Design Quality", "WARN", evidence=f"Error: {str(e)[:100]}")
 
 def check_spelling_errors(url: str):
     # (18)
-    return CheckResult(18, "Grammar/Spelling Errors", "INFO", evidence="See LLM analysis")
+    return CheckResult(18, "Grammar/Spelling Errors", "INFO", evidence="Analyzed via LLM Content Analysis check")
 
 def check_brand_consistency(url: str):
     # (19)
-    return CheckResult(19, "Consistency with Brand Identity", "INFO", evidence="See LLM analysis")
+    return CheckResult(19, "Consistency with Brand Identity", "INFO", evidence="Analyzed via LLM Content Analysis check")
 
 def check_contact_info(url: str):
     # (20)
-    resp, html, soup = fetch(url)
-    if not soup:
-        return CheckResult(20, "Presence of Contact Information", "WARN", evidence="No HTML")
-    text = soup.get_text(" ").lower()
-    hit = any(k in text for k in ["contact", "phone", "email", "address"])
-    return CheckResult(20, "Presence of Contact Information", "PASS" if hit else "WARN", evidence=f"contact_fields_detected={hit}")
+    try:
+        resp, html, soup = fetch(url)
+        if not soup:
+            return CheckResult(20, "Presence of Contact Information", "WARN", evidence="No HTML")
+        text = soup.get_text(" ").lower()
+        hit = any(k in text for k in ["contact", "phone", "email", "address", "support"])
+        return CheckResult(20, "Presence of Contact Information", "PASS" if hit else "WARN", evidence=f"contact_fields_detected={hit}")
+    except Exception as e:
+        return CheckResult(20, "Presence of Contact Information", "WARN", evidence=f"Error: {str(e)[:100]}")
 
 def check_about_privacy(url: str):
     # (21) About Us / Privacy Policy Pages
@@ -97,11 +103,14 @@ def check_too_good_offers(url: str):
 
 def check_logo_images(url: str):
     # (23)
-    resp, html, soup = fetch(url)
-    if not soup:
-        return CheckResult(23, "Logo/Images Authenticity", "WARN", evidence="No HTML")
-    imgs = soup.find_all("img")
-    return CheckResult(23, "Logo/Images Authenticity", "INFO", evidence=f"image_count={len(imgs)}")
+    try:
+        resp, html, soup = fetch(url)
+        if not soup:
+            return CheckResult(23, "Logo/Images Authenticity", "WARN", evidence="No HTML")
+        imgs = soup.find_all("img")
+        return CheckResult(23, "Logo/Images Authenticity", "INFO", evidence=f"image_count={len(imgs)}")
+    except Exception as e:
+        return CheckResult(23, "Logo/Images Authenticity", "WARN", evidence=f"Error: {str(e)[:100]}")
 
 def check_broken_links(url: str):
     # (24) Broken Links or Inactive Pages

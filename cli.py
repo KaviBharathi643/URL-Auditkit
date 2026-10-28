@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from url_audit.runner import run_all, summarize
 
-app = typer.Typer(help="URL Audit Kit — 40 checks + local LLM (Ollama)")
+app = typer.Typer(help="URL Audit Kit — 41 checks + local LLM (Ollama)")
 
 @app.command()
 def main(url: str, json_out: str = typer.Option(None, "--json", help="Write full JSON report here")):
@@ -21,15 +21,24 @@ def main(url: str, json_out: str = typer.Option(None, "--json", help="Write full
     table.add_column("Check")
     table.add_column("Status")
     table.add_column("Evidence", overflow="fold")
+    table.add_column("Details", overflow="fold")
     for r in results:
-        table.add_row(str(r.id), r.name, r.status, r.evidence or "")
+        evidence = r.evidence or "(no evidence)"
+        details = "(no extra data)"
+        if r.data:
+            try:
+                details_json = json.dumps(r.data, default=str, ensure_ascii=False)
+            except (TypeError, ValueError):
+                details_json = str(r.data)
+            details = details_json if len(details_json) <= 300 else f"{details_json[:297]}..."
+        table.add_row(str(r.id), r.name, r.status, evidence, details)
 
     console.print(table)
     console.print(f"[bold]Summary[/bold]: {counts}")
 
     if json_out:
         with open(json_out, "w") as f:
-            json.dump([r.__dict__ for r in results], f, indent=2)
+            json.dump([r.__dict__ for r in results], f, indent=2, default=str)
         console.print(f"Wrote JSON report to: {json_out}")
 
 @app.command()
