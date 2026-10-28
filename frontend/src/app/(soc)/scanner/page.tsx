@@ -99,6 +99,7 @@ export default function ScannerPage() {
           <label htmlFor="scan-url">Target URL</label>
           <textarea
             id="scan-url"
+            name="url"
             className="scan-textarea"
             placeholder="https://example.com"
             value={url}

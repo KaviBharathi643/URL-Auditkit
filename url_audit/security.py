@@ -340,6 +340,22 @@ def is_blocked_ip(ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address]) -> Tu
     if ip_str in BLOCKED_EXPLICIT_IPS:
         return True, f"Target IP {ip_str} is a restricted cloud metadata address."
 
+    # IPv4-mapped IPv6 (::ffff:0:0/96, RFC 4291)
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        return is_blocked_ip(ip.ipv4_mapped)
+
+    # NAT64 Prefixes (RFC 6052 64:ff9b::/96 and RFC 8215 64:ff9b:1::/48)
+    # The last 32 bits represent the translated IPv4 address.
+    if isinstance(ip, ipaddress.IPv6Address):
+        nat64_wkp = ipaddress.IPv6Network("64:ff9b::/96")
+        nat64_local = ipaddress.IPv6Network("64:ff9b:1::/48")
+        if ip in nat64_wkp or ip in nat64_local:
+            embedded_v4 = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+            blocked, reason = is_blocked_ip(embedded_v4)
+            if blocked:
+                return True, f"Target NAT64 IPv6 {ip_str} embeds restricted IPv4 address {embedded_v4}: {reason}"
+            return False, ""
+
     if ip.is_loopback:
         return True, f"Target IP {ip_str} is a loopback address."
 
@@ -484,9 +500,22 @@ def safe_socket_create_connection(
         timeout = min(timeout, max(0.1, remaining))
 
     approved_ips = resolve_and_validate_destination(hostname, port)
-    target_ip = str(approved_ips[0])
+    last_err: Optional[Exception] = None
+    sock: Optional[socket.socket] = None
+    target_ip: Optional[str] = None
 
-    sock = socket.create_connection((target_ip, port), timeout=timeout)
+    for ip_cand in approved_ips:
+        cand_str = str(ip_cand)
+        try:
+            sock = socket.create_connection((cand_str, port), timeout=timeout)
+            target_ip = cand_str
+            break
+        except Exception as exc:
+            last_err = exc
+            continue
+
+    if sock is None or target_ip is None:
+        raise last_err or OSError(f"Could not connect to any validated IP for '{hostname}'.")
 
     if ssl_context is not None:
         sni_host = (server_hostname or hostname).rstrip(".")
@@ -520,27 +549,31 @@ class SSRFProtectedHTTPConnection(HTTPConnection):
                 effective_timeout = remaining
 
         approved_ips = resolve_and_validate_destination(self.host, self.port)
-        target_ip = str(approved_ips[0])
+        last_err: Optional[Exception] = None
+        for ip_cand in approved_ips:
+            target_ip = str(ip_cand)
+            try:
+                sock = urllib3_conn.create_connection(
+                    (target_ip, self.port),
+                    effective_timeout,
+                    source_address=self.source_address,
+                    socket_options=self.socket_options,
+                )
+                return sock
+            except Exception as e:
+                last_err = e
+                continue
 
-        try:
-            sock = urllib3_conn.create_connection(
-                (target_ip, self.port),
-                effective_timeout,
-                source_address=self.source_address,
-                socket_options=self.socket_options,
-            )
-            return sock
-        except socket.gaierror as e:
-            raise NameResolutionError(self.host, self, e) from e
-        except socket.timeout as e:
+        if isinstance(last_err, socket.gaierror):
+            raise NameResolutionError(self.host, self, last_err) from last_err
+        if isinstance(last_err, socket.timeout):
             raise ConnectTimeoutError(
                 self,
                 f"Connection to {self.host} timed out. (connect timeout={effective_timeout})",
-            ) from e
-        except OSError as e:
-            raise NewConnectionError(
-                self, f"Failed to establish a new connection: {e}"
-            ) from e
+            ) from last_err
+        raise NewConnectionError(
+            self, f"Failed to establish a new connection: {last_err}"
+        ) from last_err
 
 
 class SSRFProtectedHTTPSConnection(HTTPSConnection):
@@ -559,27 +592,31 @@ class SSRFProtectedHTTPSConnection(HTTPSConnection):
                 effective_timeout = remaining
 
         approved_ips = resolve_and_validate_destination(self.host, self.port)
-        target_ip = str(approved_ips[0])
+        last_err: Optional[Exception] = None
+        for ip_cand in approved_ips:
+            target_ip = str(ip_cand)
+            try:
+                sock = urllib3_conn.create_connection(
+                    (target_ip, self.port),
+                    effective_timeout,
+                    source_address=self.source_address,
+                    socket_options=self.socket_options,
+                )
+                return sock
+            except Exception as e:
+                last_err = e
+                continue
 
-        try:
-            sock = urllib3_conn.create_connection(
-                (target_ip, self.port),
-                effective_timeout,
-                source_address=self.source_address,
-                socket_options=self.socket_options,
-            )
-            return sock
-        except socket.gaierror as e:
-            raise NameResolutionError(self.host, self, e) from e
-        except socket.timeout as e:
+        if isinstance(last_err, socket.gaierror):
+            raise NameResolutionError(self.host, self, last_err) from last_err
+        if isinstance(last_err, socket.timeout):
             raise ConnectTimeoutError(
                 self,
                 f"Connection to {self.host} timed out. (connect timeout={effective_timeout})",
-            ) from e
-        except OSError as e:
-            raise NewConnectionError(
-                self, f"Failed to establish a new connection: {e}"
-            ) from e
+            ) from last_err
+        raise NewConnectionError(
+            self, f"Failed to establish a new connection: {last_err}"
+        ) from last_err
 
 
 class SSRFHTTPConnectionPool(HTTPConnectionPool):

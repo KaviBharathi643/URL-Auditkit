@@ -9,7 +9,7 @@ import type {
   WebSocketMessage,
 } from '@/types';
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8765';
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://127.0.0.1:8765';
 
 export interface RunAuditOptions {
   url: string;
@@ -55,7 +55,9 @@ export async function runAudit(options: RunAuditOptions): Promise<AuditResponse>
   });
   if (!response.ok) {
     ws.close();
-    throw new Error(`Audit failed (${response.status})`);
+    const errorData = await response.json().catch(() => null);
+    const message = errorData?.error || errorData?.detail || `Audit failed (${response.status})`;
+    throw new Error(message);
   }
 
   const payload = (await response.json()) as AuditResponse;
